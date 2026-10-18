@@ -116,16 +116,27 @@ function recordFailure(db: Db, nowIso: string) {
 
 export type AuthResult =
   | { ok: true, tgId: number, username: string | null, tokenHash: string }
-  | { ok: false, error: 'invalid_token' }
+  | { ok: false, error: 'invalid_token' | 'not_member' }
 
-/** Resolves a device token; membership (403 not_member) is the caller's call (R-A3). */
+/**
+ * Resolves a device token. A dead token of a suspended user is 'not_member'; for a live token,
+ * membership (403 not_member) is the caller's call (R-A3).
+ */
 export function authenticateToken(db: Db, token: string, opts: { appVersion?: string, now?: Date } = {}): AuthResult {
   const tokenHash = hashSecret(token)
   const row = db.prepare(`
     SELECT t.tg_id, u.username FROM device_tokens t JOIN users u ON u.tg_id = t.tg_id
     WHERE t.token_hash = ? AND t.revoked_at IS NULL
   `).get(tokenHash) as { tg_id: number, username: string | null } | undefined
-  if(!row) return { ok: false, error: 'invalid_token' }
+  if(!row) {
+    // Leaving the chat revokes all tokens at once (R-B1), so the usual way such a user comes back is with
+    // a dead token: tell the app why (R-A3) instead of a plain sign-out.
+    const suspended = db.prepare(`
+      SELECT 1 FROM device_tokens t JOIN users u ON u.tg_id = t.tg_id
+      WHERE t.token_hash = ? AND u.status = 'suspended'
+    `).get(tokenHash)
+    return { ok: false, error: suspended ? 'not_member' : 'invalid_token' }
+  }
 
   // Old app builds may not send X-App-Version; keep the last known one then (R-O6)
   db.prepare('UPDATE device_tokens SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE token_hash = ?')

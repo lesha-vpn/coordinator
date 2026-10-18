@@ -29,17 +29,30 @@ export function isMemberStatus(member: ChatMemberLike): boolean {
 export function createTelegramMemberChecker(
   getChatMember: (chatId: number | string, userId: number) => Promise<ChatMemberLike>,
   chatId: number | string,
-  opts: { retries?: number, delayMs?: number } = {},
+  opts: { retries?: number, delayMs?: number, timeoutMs?: number } = {},
 ): MemberChecker {
   const retries = Math.max(1, opts.retries ?? 5)
   const delayMs = opts.delayMs ?? 5000
+  const timeoutMs = opts.timeoutMs
+
+  const call = (tgId: number): Promise<ChatMemberLike> => {
+    if(!timeoutMs) {
+      return getChatMember(chatId, tgId)
+    }
+
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<never>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs)
+    })
+    return Promise.race([getChatMember(chatId, tgId), timeout]).finally(() => clearTimeout(timer))
+  }
 
   return async (tgId) => {
     let reason = 'unknown'
 
     for(let i = 0; i < retries; i += 1) {
       try {
-        const member = await getChatMember(chatId, tgId)
+        const member = await call(tgId)
 
         return isMemberStatus(member)
           ? { status: 'member', reason: member.status }
@@ -68,6 +81,11 @@ export async function sweepMembership(ctx: AppContext, checker: MemberChecker): 
   const result: SweepResult = { checked: 0, suspended: 0, unknown: 0 }
 
   for(const user of listUsers(ctx.db)) {
+    // Revoked users stay locked out whatever their membership; checking them only adds Telegram calls
+    if(user.revoked_at) {
+      continue
+    }
+
     const { status, reason } = await checker(user.tg_id)
 
     if(status === 'unknown') {
@@ -87,6 +105,23 @@ export async function sweepMembership(ctx: AppContext, checker: MemberChecker): 
   }
 
   return result
+}
+
+/**
+ * Collapses concurrent checks of the same user into one Telegram call: the app opens with /me plus a
+ * status request per config, and each would otherwise run its own check.
+ */
+export function dedupeChecker(checker: MemberChecker): MemberChecker {
+  const inFlight = new Map<number, Promise<MembershipResult>>()
+
+  return (tgId) => {
+    let pending = inFlight.get(tgId)
+    if(!pending) {
+      pending = checker(tgId).finally(() => inFlight.delete(tgId))
+      inFlight.set(tgId, pending)
+    }
+    return pending
+  }
 }
 
 /** API gate (R-A3): cached answer if checked within maxAgeMs, else a live check. */

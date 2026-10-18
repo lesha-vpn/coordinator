@@ -2,6 +2,7 @@ import type { Db } from '../db'
 import { now } from '../db'
 import type { AppContext } from '../context'
 import type { UserRow } from '../types'
+import { revokeAllTokens } from './auth'
 
 // Users are keyed by Telegram id (R-S1); username is display-only and refreshed on every contact.
 
@@ -36,10 +37,6 @@ export function findUserByUsername(db: Db, name: string): UserRow | null {
   return rows.length === 1 ? rows[0] : null
 }
 
-export function isRevoked(user: Pick<UserRow, 'revoked_at'> | null | undefined): boolean {
-  return !!user?.revoked_at
-}
-
 export function listUsers(db: Db): UserRow[] {
   return db.prepare('SELECT * FROM users ORDER BY tg_id').all() as UserRow[]
 }
@@ -53,11 +50,6 @@ export interface DisableResult {
   tokens: number
 }
 
-function revokeTokens(db: Db, tgId: number, at: string): number {
-  return db.prepare('UPDATE device_tokens SET revoked_at = ? WHERE tg_id = ? AND revoked_at IS NULL')
-    .run(at, tgId).changes
-}
-
 /** Left the chat (R-B1): peers go away but configs are kept for a later return; tokens die for good. */
 export function suspendUser(ctx: AppContext, tgId: number): DisableResult {
   const result = ctx.db.transaction(() => {
@@ -66,7 +58,7 @@ export function suspendUser(ctx: AppContext, tgId: number): DisableResult {
     const configs = ctx.db.prepare(`UPDATE client_configs SET state = 'suspended' WHERE tg_id = ? AND state = 'active'`)
       .run(tgId).changes
 
-    return { configs, tokens: revokeTokens(ctx.db, tgId, at) }
+    return { configs, tokens: revokeAllTokens(ctx.db, tgId, new Date(at)) }
   })()
 
   if(result.configs > 0) {
@@ -104,7 +96,7 @@ export function revokeUser(ctx: AppContext, tgId: number): DisableResult {
       UPDATE client_configs SET state = 'revoked', revoked_at = ? WHERE tg_id = ? AND state != 'revoked'
     `).run(at, tgId).changes
 
-    return { configs, tokens: revokeTokens(ctx.db, tgId, at) }
+    return { configs, tokens: revokeAllTokens(ctx.db, tgId, new Date(at)) }
   })()
 
   if(result.configs > 0) {
