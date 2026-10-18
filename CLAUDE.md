@@ -8,7 +8,6 @@ The v2 "VPN coordinator": a single Node process that owns a two-hop AmneziaWG VP
 
 - Spec (Russian, numbered requirements `R-*` / acceptance criteria `AC-*`): `docs/spec/coordinator-spec.md`. Reference requirement numbers in code comments and commits.
 - Ops runbook (Russian): `docs/spec/runbook.md`.
-- `legacy/` is the old single-server bot (docker exec into one AmneziaWG container). Reference only — not built, not imported.
 
 ## Commands
 
