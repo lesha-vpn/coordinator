@@ -1,6 +1,7 @@
 import type { RenderedFile } from '../types'
 import { MARKS, NFT_TABLE, NODE_PATHS } from '../render/node/input'
 import { packTar } from './tar'
+import { shellQuote } from '../ssh/client'
 
 // Bash run on nodes over SSH (spec 7.2, 7.3). Everything a node needs to come back after a
 // reboot lives in its own files (R-P5); these scripts only install and (re)start them.
@@ -41,11 +42,6 @@ main "$@"
 `
 }
 
-/** POSIX single-quote escaping: safe for any string, including newlines. */
-export function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
-}
-
 export function bootstrapScript(): string {
   return wrapMain('# Bootstrap a clean Ubuntu 24.04 node (spec 7.2). Idempotent: safe to re-run at any point.\n', `export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
 
@@ -68,12 +64,14 @@ apt_get() {
 # version), so neither full-upgrade nor unattended-upgrades moves the node to a new kernel
 # series that amneziawg-dkms may not build for (RUVDS linux-azure rolled 6.8 -> 7.0 on the first
 # deploy and the module did not build). A new kernel comes with a reinstalled node.
-kernel_metas=$(dpkg-query -W -f='\${db:Status-Abbrev} \${Package}\n' 'linux-*' 2>/dev/null </dev/null \\
+kernel_metas=$(dpkg-query -W -f='\${db:Status-Abbrev} \${Package}\\n' 'linux-*' 2>/dev/null </dev/null \\
   | awk '$1 ~ /^[ih]i$/ { print $2 }' \\
-  | grep -Ev '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+' \\
+  | grep -Ev '[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+' \\
   | grep -Ev '^linux-(base|firmware|libc-dev|sound-base|tools-common|cloud-tools-common|doc|source)$' || true)
 if [ -n "$kernel_metas" ]; then apt-mark hold $kernel_metas >/dev/null; fi
 
+# A dpkg run cut off earlier (lost SSH session, reboot mid-upgrade) blocks every apt-get until configured.
+dpkg --configure -a </dev/null || true
 apt_get update
 apt_get full-upgrade
 apt_get install software-properties-common nftables unattended-upgrades "linux-headers-$(uname -r)"
@@ -200,7 +198,7 @@ echo ${RETIRED}
 
 /** Remote command reading the bundle tar from stdin into a fresh stage and running apply.sh. */
 export function applyCommand(): string {
-  return `set -e; d=$(mktemp -d /tmp/vpn-apply.XXXXXX); tar -xf - -o -C "$d"; exec bash "$d/apply.sh" "$d"`
+  return `set -e; d=$(mktemp -d /tmp/vpn-apply.XXXXXX); tar -xf - -o -C "$d" || { rm -rf "$d"; exit 1; }; exec bash "$d/apply.sh" "$d"`
 }
 
 const PENDING_PATH = NODE_PATHS.marker.replace(/[^/]+$/, 'pending')

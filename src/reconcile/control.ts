@@ -3,7 +3,7 @@
 
 export interface ReconcileReport {
   node: string
-  /** 'ok' | 'skipped' (already up to date) | 'error' */
+  /** 'up-to-date': nothing to apply; 'skipped': the node is in failure backoff */
   outcome: 'applied' | 'up-to-date' | 'error' | 'skipped'
   message?: string
 }

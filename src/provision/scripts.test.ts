@@ -7,8 +7,9 @@ import type { RenderedFile } from '../types'
 import { NODE_PATHS } from '../render/node/input'
 import {
   applyCommand, applyScript, bootstrapScript, buildApplyBundle, disablePasswordScript,
-  installKeyScript, readMarkerCommand, renderMetaEnv, retireScript, shellQuote, type ApplyMeta,
+  installKeyScript, readMarkerCommand, renderMetaEnv, retireScript, type ApplyMeta,
 } from './scripts'
+import { shellQuote } from '../ssh/client'
 
 function bashSyntaxOk(script: string): void {
   const r = spawnSync('bash', ['-n'], { input: script })

@@ -55,6 +55,7 @@ export interface SshSession {
 const DEFAULT_CONNECT_TIMEOUT_MS = 20_000
 const DEFAULT_EXEC_TIMEOUT_MS = 10 * 60_000
 
+/** POSIX single-quote escaping: safe for any string, including newlines. */
 export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
@@ -85,8 +86,9 @@ export function scrubSecret(text: string, secret: string | undefined): string {
   return text.split(secret).join('***')
 }
 
-function tail(text: string, lines = 20): string {
-  return text.trimEnd().split('\n').slice(-lines).join('\n').slice(-2000)
+/** Last lines of command output, capped in length, for error messages and alerts. */
+export function tail(text: string, lines = 20, chars = 2000): string {
+  return text.trimEnd().split('\n').slice(-lines).join('\n').slice(-chars)
 }
 
 export function connectSsh(opts: ConnectOptions): Promise<SshSession> {
