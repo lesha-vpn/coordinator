@@ -71,14 +71,14 @@ async function main() {
 
   const checker = createTelegramMemberChecker(
     (chatId, userId) => bot.getChatMember(chatId, userId),
-    config().telegram.chatId
+    () => config().telegram.chatId,
   )
 
   // The API answers the app, which gives up after ~12 s: one short attempt, and a Telegram outage
   // falls back to the cached status (ensureMemberFresh) instead of holding every request for minutes.
   const apiChecker = dedupeChecker(createTelegramMemberChecker(
     (chatId, userId) => bot.getChatMember(chatId, userId),
-    config().telegram.chatId,
+    () => config().telegram.chatId,
     { retries: 1, delayMs: 0, timeoutMs: 5_000 },
   ))
 

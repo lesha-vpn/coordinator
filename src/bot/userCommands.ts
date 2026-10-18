@@ -24,6 +24,7 @@ const REVOKE_PREFIX = 'revoke_token:'
 const NOT_MEMBER = 'Сорри, тебя нет в списках'
 const CHECK_FAILED = 'Не получилось проверить, есть ли ты в чате. Попробуй чуть позже'
 const REVOKED = 'Доступ отозван администратором.'
+const ADD_FAILED = 'Не получилось добавить устройство. Админ уже в курсе, попробуй позже.'
 const SEND_FAILED = 'Не получилось отправить конфиг, попробуй ещё раз.'
 const NAME_TAKEN = 'Устройство с таким именем уже есть'
 const NO_SUCH_DEVICE = 'Устройства с таким именем нет :('
@@ -164,7 +165,17 @@ function infoText(ctx: AppContext, tgId: number): string {
 
 async function addDevice(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {
   const name = arg?.toLowerCase()
-  const result = name ? createConfig(ctx, { tgId: chatId, name, issuedVia: 'bot' }) : { error: 'invalid_name' as const }
+  let result: ReturnType<typeof createConfig> | { error: 'invalid_name' }
+  try {
+    result = name ? createConfig(ctx, { tgId: chatId, name, issuedVia: 'bot' }) : { error: 'invalid_name' as const }
+  } catch(e) {
+    // e.g. clients.subnet exhausted: without this the user got no answer at all
+    const reason = e instanceof Error ? e.message : String(e)
+    console.error(`${now()} config for ${chatId} not created: ${reason}`)
+    await ctx.alert(`Не удалось выпустить конфиг для ${chatId}: ${reason}`)
+    await messenger.sendMessage(chatId, ADD_FAILED)
+    return
+  }
 
   if('error' in result) {
     const user = getUser(ctx.db, chatId)

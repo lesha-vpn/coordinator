@@ -388,6 +388,19 @@ describe('admin revocation (/revoke_user)', () => {
 })
 
 describe('/add delivery failure', () => {
+  it('answers and alerts when no config can be created (subnet exhausted)', async () => {
+    const t = setup()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const alert = vi.fn(async () => {})
+    t.ctx.alert = alert
+    t.ctx.config().clients.subnet = '10.66.0.0/30'
+    await t.send('/add phone')
+    await t.send('/add laptop')
+    expect(findConfigByName(t.ctx.db, ALICE, 'laptop')).toBeNull()
+    expect(t.texts().at(-1)).toBe('Не получилось добавить устройство. Админ уже в курсе, попробуй позже.')
+    expect(alert).toHaveBeenCalledWith(expect.stringMatching(/exhausted/))
+  })
+
   it('revokes the new config and asks to retry', async () => {
     const t = setup()
     vi.spyOn(console, 'warn').mockImplementation(() => {})

@@ -28,23 +28,26 @@ export function isMemberStatus(member: ChatMemberLike): boolean {
 
 export function createTelegramMemberChecker(
   getChatMember: (chatId: number | string, userId: number) => Promise<ChatMemberLike>,
-  chatId: number | string,
+  // A getter follows config.yaml hot reloads (the chat_member handler reads the live value too)
+  chatId: number | string | (() => number | string),
   opts: { retries?: number, delayMs?: number, timeoutMs?: number } = {},
 ): MemberChecker {
   const retries = Math.max(1, opts.retries ?? 5)
   const delayMs = opts.delayMs ?? 5000
   const timeoutMs = opts.timeoutMs
 
+  const chat = typeof chatId === 'function' ? chatId : () => chatId
+
   const call = (tgId: number): Promise<ChatMemberLike> => {
     if(!timeoutMs) {
-      return getChatMember(chatId, tgId)
+      return getChatMember(chat(), tgId)
     }
 
     let timer: NodeJS.Timeout | undefined
     const timeout = new Promise<never>((_, rej) => {
       timer = setTimeout(() => rej(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs)
     })
-    return Promise.race([getChatMember(chatId, tgId), timeout]).finally(() => clearTimeout(timer))
+    return Promise.race([getChatMember(chat(), tgId), timeout]).finally(() => clearTimeout(timer))
   }
 
   return async (tgId) => {
