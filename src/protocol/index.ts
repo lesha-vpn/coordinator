@@ -8,8 +8,6 @@ export interface ProtocolProfile {
   name: ProtocolName
   /** Fresh random params for one interface; both peers of that interface must use them. */
   generateParams(): ObfuscationParams
-  /** Interface-section keys this version understands, in config-file order. */
-  paramKeys: string[]
 }
 
 const profiles: Record<ProtocolName, ProtocolProfile> = { awg2, awg3 }

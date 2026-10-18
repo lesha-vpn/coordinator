@@ -1,6 +1,7 @@
 import { randomBytes, randomInt } from 'node:crypto'
 import type { ObfuscationParams } from '../types'
 import type { ProtocolProfile } from './index'
+import type { RandInt } from './params'
 
 // AmneziaWG 3.1 params, mirroring how the AmneziaVPN client generates a new AWG 3.1 server
 // (amnezia-client dev, 2026-10):
@@ -12,18 +13,9 @@ import type { ProtocolProfile } from './index'
 // amneziawg-dkms 4680320 / amneziawg-tools ee0f0a9 (2026-08-12), which bootstrap installs.
 // The app recognises 3.1 by these keys (awgProtocolConfig.cpp hasAwg3Markers).
 
-export const AWG3_PARAM_KEYS = [
-  'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4', 'I1',
-  'HeaderProtectionKey', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout',
-  'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies',
-]
-
 export const PADDING = '12'
 /** protocolConstants.h defaultSpecialJunk1: a DNS-response-shaped first packet. */
 export const SPECIAL_JUNK_1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>'
-
-/** Uniform integer in [min, max). */
-export type RandInt = (min: number, max: number) => number
 
 export function generateAwg3Params(rand: RandInt = randomInt, key: () => Buffer = () => randomBytes(32)): ObfuscationParams {
   return {
@@ -52,6 +44,5 @@ export function generateAwg3Params(rand: RandInt = randomInt, key: () => Buffer 
 
 export const awg3: ProtocolProfile = {
   name: 'awg3',
-  paramKeys: AWG3_PARAM_KEYS,
   generateParams: () => generateAwg3Params(),
 }

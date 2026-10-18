@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto'
 import type { ObfuscationParams } from '../types'
 import type { ProtocolProfile } from './index'
+import type { RandInt } from './params'
 
 // AmneziaWG 2.0 obfuscation params. Sizes mirror how the AmneziaVPN client generated
 // them before it switched to AWG 3.1 defaults (amnezia-client, commit 9a7db34^):
@@ -11,8 +12,6 @@ import type { ProtocolProfile } from './index'
 //     isPacketSizeEqual, isHeadersEqual)
 // AmneziaVPN pins H1-H4 to 1-4 because AWG 3.1 has HeaderProtectionKey; plain AWG 2.0 has
 // no such thing, so H1-H4 are random disjoint ranges here. Default is awg3 (./awg3.ts).
-
-export const AWG2_PARAM_KEYS = ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4']
 
 /** Plain WireGuard message sizes; S1-S4 pad init/response/cookie/transport respectively. */
 export const MESSAGE_SIZES = { init: 148, response: 92, cookie: 64, transport: 32 } as const
@@ -27,9 +26,6 @@ export const JMAX_LIMIT = 1280
 // H values are uint32 message types; 1-4 are vanilla WireGuard's, so stay above them.
 export const HEADER_MIN = 5
 export const HEADER_MAX = 0xffffffff
-
-/** Uniform integer in [min, max). */
-export type RandInt = (min: number, max: number) => number
 
 export function generateAwg2Params(rand: RandInt = randomInt): ObfuscationParams {
   const s4 = TRANSPORT_JUNK_SIZE
@@ -84,6 +80,5 @@ export function generateHeaderRanges(rand: RandInt = randomInt): string[] {
 
 export const awg2: ProtocolProfile = {
   name: 'awg2',
-  paramKeys: AWG2_PARAM_KEYS,
   generateParams: () => generateAwg2Params(),
 }

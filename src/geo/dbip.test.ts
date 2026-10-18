@@ -1,6 +1,6 @@
 import zlib from 'zlib'
 import { describe, expect, it, vi } from 'vitest'
-import { dbipUrl, fetchCountryCidrs, parseDbipCsv } from './dbip'
+import { dbipUrl, fetchCountryCidrs, parseDbipLines } from './dbip'
 
 const FIXTURE = [
   '1.0.0.0,1.0.0.255,AU',
@@ -21,13 +21,14 @@ describe('dbipUrl', () => {
   })
 })
 
-describe('parseDbipCsv', () => {
-  it('keeps only IPv4 ranges of the country, merged', () => {
-    expect(parseDbipCsv(FIXTURE, 'RU')).toEqual([
+describe('parseDbipLines', () => {
+  it('keeps only IPv4 ranges of the country, merged', async () => {
+    const lines = FIXTURE.split('\n')
+    expect(await parseDbipLines(lines, 'RU')).toEqual([
       '2.0.0.0/23', '2.0.2.0/30', '2.0.2.4/31', '5.0.0.0/25',
     ])
-    expect(parseDbipCsv(FIXTURE, 'de')).toEqual(['3.0.0.0/24'])
-    expect(parseDbipCsv(FIXTURE, 'US')).toEqual([])
+    expect(await parseDbipLines(lines, 'de')).toEqual(['3.0.0.0/24'])
+    expect(await parseDbipLines(lines, 'US')).toEqual([])
   })
 })
 

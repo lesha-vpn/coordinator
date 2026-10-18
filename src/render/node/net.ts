@@ -1,18 +1,6 @@
 // Tiny IPv4/CIDR helpers shared by the node renderers.
 
-function ipToInt(ip: string): number {
-  const parts = ip.split('.')
-  if(parts.length !== 4) throw new Error(`invalid IPv4 address: ${ip}`)
-  return parts.reduce((acc, p) => {
-    const n = Number(p)
-    if(!/^\d{1,3}$/.test(p) || n > 255) throw new Error(`invalid IPv4 address: ${ip}`)
-    return acc * 256 + n
-  }, 0)
-}
-
-function intToIp(n: number): string {
-  return [24, 16, 8, 0].map(s => Math.floor(n / 2 ** s) % 256).join('.')
-}
+import { intToIp, ipToInt } from '../../geo/cidr'
 
 function parseCidr(cidr: string): { base: number, len: number } {
   const [ip, lenStr] = cidr.split('/')

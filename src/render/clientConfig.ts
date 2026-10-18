@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { deflateSync } from 'node:zlib'
+import { orderedParamEntries } from '../protocol/params'
 import type { ObfuscationParams } from '../types'
 
 export interface ClientRenderInput {
@@ -14,22 +15,8 @@ export interface ClientRenderInput {
 const ALLOWED_IPS = ['0.0.0.0/0', '::/0']
 const KEEPALIVE = 25
 
-// Known AWG keys in the order awg-quick/AmneziaVPN print them; anything else follows alphabetically.
-const PARAM_ORDER = [
-  'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4',
-  'I1', 'I2', 'I3', 'I4', 'I5',
-  'HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout',
-  'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies',
-]
-
 function orderedParams(params: ObfuscationParams): [string, string][] {
-  const rank = (k: string) => {
-    const i = PARAM_ORDER.indexOf(k)
-    return i === -1 ? PARAM_ORDER.length : i
-  }
-  return Object.entries(params)
-    .filter(([, v]) => v !== '')
-    .sort(([a], [b]) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))
+  return orderedParamEntries(params).filter(([, v]) => v !== '')
 }
 
 export function renderClientConf(input: ClientRenderInput): string {

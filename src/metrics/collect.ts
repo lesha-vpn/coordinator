@@ -1,4 +1,5 @@
 import type { AppContext } from '../context'
+import { latestHandshake } from '../health/dump'
 import { CLIENT_IFACE, HANDSHAKE_FRESH_SEC, TUNNEL_IFACE } from '../health/evaluate'
 import type { ProbeRecord } from '../reconcile/loop'
 import { nodeName, type NodeRole } from '../types'
@@ -178,7 +179,7 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
         const sum = (f: 'rxBytes' | 'txBytes') => tunnel.peers.reduce((acc, p) => acc + p[f], 0)
         m.add('vpn_tunnel_transmit_bytes_total', { site: site.name }, sum('txBytes'))
         m.add('vpn_tunnel_receive_bytes_total', { site: site.name }, sum('rxBytes'))
-        const hs = tunnel.peers.reduce((max, p) => Math.max(max, p.latestHandshake), 0)
+        const hs = latestHandshake(probe.dump, TUNNEL_IFACE)
         if(hs > 0) m.add('vpn_tunnel_last_handshake_timestamp_seconds', { site: site.name }, hs)
       }
     }
