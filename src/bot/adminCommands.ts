@@ -4,6 +4,7 @@ import type TelegramBot from 'node-telegram-bot-api'
 import type { AppContext } from '../context'
 import type { ReconcileReport, ReconcilerControl } from '../reconcile/control'
 import { appVersionStats } from '../services/auth'
+import { getDownloadUrl, normalizeDownloadUrl, setDownloadUrl } from '../services/settings'
 import { findUserByUsername, getUser, revokeUser, unrevokeUser } from '../services/users'
 import { getKnownHost } from '../ssh/knownHosts'
 import { nodeName, type HostRow } from '../types'
@@ -31,6 +32,7 @@ const HELP = [
   '/revoke_user <@username|id> — отозвать пользователя (насовсем, даже если он остался в чате)',
   '/unrevoke_user <@username|id> — вернуть доступ; конфиги заново выпускает сам пользователь',
   '/backup — прислать бэкап сейчас',
+  '/download_url [ссылка] — показать или сменить, куда ведёт /download',
 ].join('\n')
 
 const ROTATE_TEXT: Record<'tunnel' | 'clients', string> = {
@@ -182,6 +184,24 @@ async function unrevokeUserCommand(ctx: AppContext, messenger: Messenger, chatId
     : `${who} не был отозван`)
 }
 
+async function downloadUrlCommand(ctx: AppContext, messenger: Messenger, chatId: number, adminId: number, arg: string | undefined) {
+  const link = `${ctx.config().api.publicUrl.replace(/\/+$/, '')}/download`
+  if(!arg) {
+    const current = getDownloadUrl(ctx.db)
+    await messenger.sendMessage(chatId, current
+      ? `${link} ведёт на ${current}\nСменить: /download_url <ссылка>`
+      : `Ссылка для ${link} не задана. Задать: /download_url <ссылка>`)
+    return
+  }
+  const url = normalizeDownloadUrl(arg)
+  if(!url) {
+    await messenger.sendMessage(chatId, 'Нужна ссылка http:// или https://, например /download_url https://github.com/lesha-vpn/client/releases/latest')
+    return
+  }
+  setDownloadUrl(ctx.db, url, adminId)
+  await messenger.sendMessage(chatId, `Готово: ${link} теперь ведёт на ${url}`)
+}
+
 async function backupCommand(deps: AdminCommandDeps, chatId: number) {
   let file: string | undefined
   try {
@@ -261,6 +281,10 @@ export async function handleAdminCommand(ctx: AppContext, deps: AdminCommandDeps
 
     case 'backup':
       await backupCommand(deps, chatId)
+      return true
+
+    case 'download_url':
+      await downloadUrlCommand(ctx, messenger, chatId, msg.from.id, args[0])
       return true
 
     default:
