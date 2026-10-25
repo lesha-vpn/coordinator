@@ -100,7 +100,7 @@ export function evaluateSite(local: NodeProbe, remote: NodeProbe, nowSec: number
   return { network, local: localHealth, remote: remoteHealth, detail: `${localText}; ${remoteText}` }
 }
 
-/** R-H4: a state change is confirmed only after 2 consecutive identical observations. */
+/** R-H4: a state change is confirmed only after `threshold` consecutive identical observations. */
 export class Debouncer {
   private pending: NetworkState | null = null
   private count = 0
@@ -112,7 +112,7 @@ export class Debouncer {
   }
 
   /** Returns the newly confirmed state, or null when nothing changed (yet). */
-  observe(state: NetworkState): NetworkState | null {
+  observe(state: NetworkState, threshold = this.threshold): NetworkState | null {
     if(state === this.confirmed) {
       this.pending = null
       this.count = 0
@@ -126,7 +126,7 @@ export class Debouncer {
 
     this.count += 1
 
-    if(this.count < this.threshold) {
+    if(this.count < threshold) {
       return null
     }
 
@@ -142,6 +142,28 @@ export function readSiteNetwork(db: Db, site: string): NetworkState | null {
   const row = db.prepare('SELECT network FROM sites WHERE name = ?').get(site) as { network: NetworkState } | undefined
 
   return row?.network ?? null
+}
+
+/** What the users' chat was last told about the site (R-H4); falls back to the stored network. */
+export function readSiteAnnounced(db: Db, site: string): NetworkState | null {
+  const row = db.prepare('SELECT network, announced FROM sites WHERE name = ?').get(site) as { network: NetworkState, announced: NetworkState | null } | undefined
+
+  return row ? row.announced ?? row.network : null
+}
+
+/**
+ * Pins what the chat is assumed to know before the network column moves on: the stored network
+ * (rows from before the column existed), or `initial` for a new site. No-op once set.
+ */
+export function seedSiteAnnounced(db: Db, site: string, initial: NetworkState): void {
+  db.prepare(`
+    INSERT INTO sites (name, network, announced) VALUES (?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET announced = COALESCE(sites.announced, sites.network)
+  `).run(site, initial, initial)
+}
+
+export function writeSiteAnnounced(db: Db, site: string, state: NetworkState): void {
+  db.prepare('UPDATE sites SET announced = ? WHERE name = ?').run(state, site)
 }
 
 /**

@@ -372,27 +372,97 @@ function probeWith(tunnelHandshake: number): NodeProbe {
 }
 
 describe('health', () => {
-  it('first observation is the baseline; transitions need 2 checks and are announced', async () => {
+  const network = (h: Harness) => (h.ctx.db.prepare("SELECT network FROM sites WHERE name = 'main'").get() as { network: string }).network
+  const chat = (h: Harness) => h.alerts.filter(a => a.announce).map(a => a.text)
+
+  it('first observation is the baseline; admins hear after 2 checks, the chat after announceAfterMin', async () => {
     const h = setup()
     await h.rec.runCycle() // creates hosts rows
-    const nowSec = T0.getTime() / 1000
     let state: 'ok' | 'degraded' = 'ok'
-    h.probe.mockImplementation(async () => probeWith(state === 'ok' ? nowSec - 10 : 0))
+    h.probe.mockImplementation(async () => probeWith(state === 'ok' ? h.clock.now.getTime() / 1000 - 10 : 0))
 
     await h.rec.runHealth()
     expect(h.alerts).toHaveLength(0)
-    expect(h.ctx.db.prepare("SELECT network FROM sites WHERE name = 'main'").get()).toEqual({ network: 'ok' })
+    expect(network(h)).toBe('ok')
 
     state = 'degraded'
+    h.clock.now = minutes(1)
     await h.rec.runHealth()
     expect(h.alerts).toHaveLength(0)
-    expect(h.ctx.db.prepare("SELECT network FROM sites WHERE name = 'main'").get()).toEqual({ network: 'ok' })
+    expect(network(h)).toBe('ok')
     expect(h.host('main/local').health).toBe('degraded')
 
+    h.clock.now = minutes(2)
+    await h.rec.runHealth()
+    expect(h.alerts.map(a => a.announce)).toEqual([false])
+    expect(h.alerts[0].text).toMatch(/main: ok → degraded/)
+    expect(network(h)).toBe('degraded')
+
+    h.clock.now = minutes(6)
+    await h.rec.runHealth()
+    expect(chat(h)).toEqual([])
+
+    h.clock.now = minutes(7) // 5 minutes since the confirmed change
+    await h.rec.runHealth()
+    expect(chat(h)).toEqual(['Зарубежные сайты сейчас недоступны, остальное работает. Уже чиним.'])
+    await h.rec.runHealth()
+    expect(chat(h)).toHaveLength(1)
+
+    state = 'ok'
+    h.clock.now = minutes(8)
+    await h.rec.runHealth()
+    h.clock.now = minutes(9)
+    await h.rec.runHealth()
+    expect(h.alerts.at(-2)?.text).toMatch(/degraded → ok/)
+    expect(chat(h)).toEqual(['Зарубежные сайты сейчас недоступны, остальное работает. Уже чиним.', 'VPN снова работает полностью.'])
+  })
+
+  it('a short outage reaches admins only, also across a restart', async () => {
+    const h = setup()
+    await h.rec.runCycle()
+    let state: 'ok' | 'degraded' = 'ok'
+    h.probe.mockImplementation(async () => probeWith(state === 'ok' ? h.clock.now.getTime() / 1000 - 10 : 0))
+
+    await h.rec.runHealth()
+    state = 'degraded'
+    for(const m of [1, 2, 3]) {
+      h.clock.now = minutes(m)
+      await h.rec.runHealth()
+    }
+    expect(network(h)).toBe('degraded')
+
+    // Restart mid-outage (npm run update → pm2 reload): the stored state seeds a fresh Reconciler.
+    const rec = new Reconciler(h.ctx, { ...(h.rec as unknown as { deps: ReconcilerDeps }).deps })
+    state = 'ok'
+    for(const m of [4, 5]) {
+      h.clock.now = minutes(m)
+      await rec.runHealth()
+    }
+    expect(network(h)).toBe('ok')
+    expect(h.alerts.map(a => a.text)).toEqual([expect.stringMatching(/ok → degraded/), expect.stringMatching(/degraded → ok/)])
+    expect(chat(h)).toEqual([])
+  })
+
+  it('no node answering over SSH is no verdict; thresholds come from config', async () => {
+    const h = setup({}, c => { c.health = { confirmChecks: 3, announceAfterMin: 0 } })
+    await h.rec.runCycle()
+    h.probe.mockResolvedValue(probeWith(T0.getTime() / 1000 - 10))
+    await h.rec.runHealth()
+
+    h.probe.mockResolvedValue({ reachable: false, error: 'ssh timeout' })
+    for(let i = 0; i < 5; i++) await h.rec.runHealth()
+    expect(h.alerts).toHaveLength(0)
+    expect(network(h)).toBe('ok')
+    expect(h.host('main/local').health).toBe('down')
+
+    // Only LOCAL down is a real verdict: 3 checks, then admins and (delay 0) the chat at once.
+    h.probe.mockImplementation(async (_deps, target: NodeTarget) => target.node === 'main/local' ? { reachable: false } : probeWith(0))
+    await h.rec.runHealth()
+    await h.rec.runHealth()
+    expect(h.alerts).toHaveLength(0)
     await h.rec.runHealth()
     expect(h.alerts.map(a => a.announce)).toEqual([false, true])
-    expect(h.alerts[0].text).toMatch(/main: ok → degraded/)
-    expect(h.ctx.db.prepare("SELECT network FROM sites WHERE name = 'main'").get()).toEqual({ network: 'degraded' })
+    expect(chat(h)).toEqual(['VPN сейчас недоступен. Уже чиним.'])
   })
 
   it('seeds from the stored network state and skips a site whose node is being provisioned', async () => {

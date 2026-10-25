@@ -9,6 +9,11 @@ telegram:
   admins: [123456789]              # tg id: технические алерты и админ-команды
   announceOutages: true            # падение/восстановление сети дублировать в чат chatId
 
+# Минутные health-проверки (спека R-H4); весь блок необязателен, ниже значения по умолчанию.
+# health:
+#   confirmChecks: 2                # смена состояния (и алерт админам) после N проверок подряд
+#   announceAfterMin: 5             # в чат пользователей — только если сбой длится столько минут
+
 api:
   listen: 127.0.0.1:8080            # за reverse proxy с TLS
   publicUrl: https://vpn.example.com

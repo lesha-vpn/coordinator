@@ -95,7 +95,7 @@ describe('persistSiteHealth', () => {
 
     expect(readSiteNetwork(db, 'main')).toBeNull()
     persistSiteHealth(db, 'main', { network: 'degraded', local: 'degraded', remote: 'unknown-mgmt', detail: 'd1' }, 't1')
-    expect(db.prepare('SELECT * FROM sites').all()).toEqual([{ name: 'main', network: 'degraded', checked_at: 't1' }])
+    expect(db.prepare('SELECT name, network, checked_at FROM sites').all()).toEqual([{ name: 'main', network: 'degraded', checked_at: 't1' }])
     expect(db.prepare('SELECT health, health_checked_at, health_detail FROM hosts').get())
       .toEqual({ health: 'degraded', health_checked_at: 't1', health_detail: 'd1' })
 
