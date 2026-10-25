@@ -20,7 +20,7 @@ npm test              # vitest run (unit tests live next to code as *.test.ts)
 npm run typecheck     # tsc --noEmit -p tsconfig.test.json (includes tests)
 npm run check-config [-- <path>]           # validate config.yaml without starting (needs build)
 npm run restore -- <backup.tar> [--force]  # unpack a decrypted backup into DB/config/SSH-key paths (needs build)
-npm run update        # git pull && npm ci && npm run build && npm run pm2:reload
+npm run update        # git pull --ff-only origin master && npm ci && npm run build && npm run pm2:reload
 npm run pm2:start | pm2:stop | pm2:restart | pm2:reload | pm2:delete | pm2:logs | pm2:save | pm2:startup
 ```
 

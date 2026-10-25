@@ -23,7 +23,7 @@ npm run pm2:start && npm run pm2:save
 npm run pm2:startup   # один раз, для автозапуска
 ```
 
-Обновление: `npm run update` (git pull, сборка, `pm2 reload`).
+Обновление: `npm run update` (git pull только ветки master, сборка, `pm2 reload`).
 
 ## Разработка
 
