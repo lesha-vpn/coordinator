@@ -119,6 +119,15 @@ const migrations: string[] = [
   ALTER TABLE hosts ADD COLUMN retired_address TEXT;
   ALTER TABLE hosts ADD COLUMN retired_at TEXT;
   `,
+  `
+  -- Small admin-set values that are not config.yaml policy, e.g. the /download link (R-A12).
+  CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by INTEGER
+  );
+  `,
 ]
 
 export function openDb(file: string): Db {

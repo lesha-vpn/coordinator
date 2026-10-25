@@ -6,6 +6,7 @@ import { LoginRateLimiter, issueLoginCode, listTokens } from '../services/auth'
 import { createConfig } from '../services/configs'
 import { ensureSiteIdentities } from '../services/identity'
 import type { MembershipStatus } from '../services/membership'
+import { setDownloadUrl } from '../services/settings'
 import { exampleConfig } from '../services/testFixtures'
 import { getUser, upsertUser } from '../services/users'
 import { buildApi } from './server'
@@ -47,6 +48,27 @@ describe('health', () => {
     const res = await app.inject({ method: 'GET', url: '/healthz' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ ok: true })
+  })
+})
+
+describe('download (R-A12)', () => {
+  it('is 404 until the admin sets a link', async () => {
+    const res = await app.inject({ method: 'GET', url: '/download' })
+    expect(res.statusCode).toBe(404)
+    expect(res.json().error.code).toBe('not_found')
+  })
+
+  it('redirects to the current link without auth and without caching', async () => {
+    setDownloadUrl(ctx.db, 'https://github.com/lesha-vpn/client/releases/latest')
+    const res = await app.inject({ method: 'GET', url: '/download' })
+    expect(res.statusCode).toBe(302)
+    expect(res.headers.location).toBe('https://github.com/lesha-vpn/client/releases/latest')
+    expect(res.headers['cache-control']).toBe('no-store')
+
+    setDownloadUrl(ctx.db, 'https://example.com/LeshaVPN.apk')
+    const head = await app.inject({ method: 'HEAD', url: '/download' })
+    expect(head.statusCode).toBe(302)
+    expect(head.headers.location).toBe('https://example.com/LeshaVPN.apk')
   })
 })
 

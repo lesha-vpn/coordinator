@@ -6,6 +6,7 @@ import {
   revokeConfig,
 } from '../services/configs'
 import { ensureMemberFresh, type MemberChecker } from '../services/membership'
+import { getDownloadUrl } from '../services/settings'
 
 // Client API for the AmneziaVPN fork (spec 9). The contract is shared with old app builds
 // in the wild, so changes here must stay backward compatible (R-A10).
@@ -102,6 +103,13 @@ export function buildApi(ctx: AppContext, deps: ApiDeps): FastifyInstance {
   app.setNotFoundHandler((req, reply) => send(reply, 404, 'not_found', 'No such endpoint'))
 
   app.get('/healthz', async () => ({ ok: true }))
+
+  // R-A12: public, no auth; the admin points it at the latest app release with /download_url
+  app.get('/download', async (_req, reply) => {
+    const url = getDownloadUrl(ctx.db)
+    if(!url) return send(reply, 404, 'not_found', 'Download link is not set')
+    return reply.header('cache-control', 'no-store').redirect(url, 302)
+  })
 
   app.register(async (v1) => {
     v1.post<{ Body: { code: string, deviceLabel?: string } }>('/auth/login', {

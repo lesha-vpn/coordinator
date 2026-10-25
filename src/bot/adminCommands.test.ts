@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createEvents, type AppContext } from '../context'
 import { now, openDb } from '../db'
 import type { ReconcilerControl, ReconcileReport } from '../reconcile/control'
+import { getDownloadUrl } from '../services/settings'
 import { exampleConfig } from '../services/testFixtures'
 import { getUser, upsertUser } from '../services/users'
 import { handleAdminCallback, handleAdminCommand, isAdmin, sendDailyBackup } from './adminCommands'
@@ -240,6 +241,34 @@ describe('admin commands', () => {
     deps.backup.mockRejectedValueOnce(new Error('backup.pub not found'))
     await handleAdminCommand(ctx, deps, msg('/backup'))
     expect(sent[0].text).toContain('backup.pub not found')
+  })
+})
+
+describe('/download_url (R-A12)', () => {
+  it('shows, sets and validates the link', async () => {
+    const { ctx, deps, sent } = setup()
+    const link = `${ctx.config().api.publicUrl.replace(/\/+$/, '')}/download`
+
+    await handleAdminCommand(ctx, deps, msg('/download_url'))
+    expect(sent[0].text).toContain('не задана')
+    expect(sent[0].text).toContain(link)
+
+    await handleAdminCommand(ctx, deps, msg('/download_url ftp://x'))
+    expect(sent[1].text).toContain('https://')
+    expect(getDownloadUrl(ctx.db)).toBeNull()
+
+    await handleAdminCommand(ctx, deps, msg('/download_url https://github.com/lesha-vpn/client/releases/latest'))
+    expect(getDownloadUrl(ctx.db)).toBe('https://github.com/lesha-vpn/client/releases/latest')
+    expect(sent[2].text).toContain('Готово')
+
+    await handleAdminCommand(ctx, deps, msg('/download_url'))
+    expect(sent[3].text).toContain(`${link} ведёт на https://github.com/lesha-vpn/client/releases/latest`)
+  })
+
+  it('is not available to regular users', async () => {
+    const { ctx, deps } = setup()
+    expect(await handleAdminCommand(ctx, deps, msg('/download_url https://evil.example', USER))).toBe(false)
+    expect(getDownloadUrl(ctx.db)).toBeNull()
   })
 })
 
