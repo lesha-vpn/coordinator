@@ -81,7 +81,7 @@
 
 ### 2.1 Обновление координатора
 
-1. **[коорд]** `cd /opt/vpn-coordinator && git pull && npm ci && npm run build`.
+1. **[коорд]** `cd /opt/vpn-coordinator && git pull --ff-only origin master && npm ci && npm run build`.
 2. **[коорд]** `npm run pm2:reload`.
 
    Шаги 1–2 одной командой: `npm run update`.
