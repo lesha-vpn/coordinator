@@ -88,6 +88,12 @@ export const configSchema = z.object({
     alwaysDirect: z.array(cidr).default([]),
     alwaysRemote: z.array(cidr).default([]),
   }).prefault({}),
+  // R-H4: minute health checks. A loaded coordinator (npm ci, node-gyp) can fail probes for a few
+  // minutes, so the users' chat hears about an outage only once it has lasted announceAfterMin.
+  health: z.object({
+    confirmChecks: z.number().int().min(1).max(60).default(2),
+    announceAfterMin: z.number().int().min(0).max(24 * 60).default(5),
+  }).prefault({}),
   sites: z.array(z.object({
     name: siteName,
     local: localNode,

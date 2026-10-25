@@ -1,13 +1,13 @@
 import type { AlertOptions, AppContext } from '../context'
 import type { SiteConfig } from '../config/schema'
 import type { NodeTarget, ProvisionDeps, ProvisionPhase, probeNode, provisionNode, retireNode } from '../provision/node'
-import type { HostRow, NodeRole } from '../types'
+import type { HostRow, NetworkState, NodeRole } from '../types'
 import { nodeName } from '../types'
 import { ensureSiteIdentities, rotateParams, syncProtocols } from '../services/identity'
 import { trustAddress } from '../ssh/knownHosts'
 import { HostKeyMismatchError, SshAuthError } from '../ssh/client'
-import { Debouncer, evaluateSite, persistSiteHealth, readSiteNetwork, type NodeProbe } from '../health/evaluate'
-import { notifyTransition } from '../health/notify'
+import { Debouncer, evaluateSite, persistSiteHealth, readSiteAnnounced, readSiteNetwork, seedSiteAnnounced, writeSiteAnnounced, type NodeProbe } from '../health/evaluate'
+import { adminTransitionMessage, announceMessage, nextAnnouncement } from '../health/notify'
 import { getGeoSet, isGeoSetStale, updateGeoSet } from '../geo/store'
 import { buildTargets } from './desired'
 import type { ReconcilerControl, ReconcileReport } from './control'
@@ -108,6 +108,8 @@ function isHostKeyMismatch(err: unknown): boolean {
 export class Reconciler implements ReconcilerControl {
   private readonly locks = new Map<string, NodeLock>()
   private readonly debouncers = new Map<string, Debouncer>()
+  /** Per site: when the debounced state last changed (ms), for the users'-chat delay (R-H4). */
+  private readonly stateSince = new Map<string, number>()
   private running: Promise<ReconcileReport[]> | null = null
   private queued: Queued | null = null
   private healthRunning = false
@@ -163,11 +165,6 @@ export class Reconciler implements ReconcilerControl {
     } catch(err) {
       this.log(`alert failed: ${errorMessage(err)}`)
     }
-  }
-
-  // Same context, but its alert never blocks (for helpers that await ctx.alert).
-  private get nonBlockingCtx(): AppContext {
-    return { ...this.ctx, alert: async (text, opts) => this.alert(text, opts) }
   }
 
   // --- triggers ---
@@ -461,18 +458,37 @@ export class Reconciler implements ReconcilerControl {
     this.probes.set(localName, { probe: local, at })
     this.probes.set(remoteName, { probe: remote, at })
     const result = evaluateSite(local, remote, Math.floor(at.getTime() / 1000))
+    const health = this.ctx.config().health
 
     let debouncer = this.debouncers.get(site.name)
     if(!debouncer) {
       // No stored state yet: the first observation is the baseline, nothing to announce.
       debouncer = new Debouncer(readSiteNetwork(this.ctx.db, site.name) ?? result.network)
       this.debouncers.set(site.name, debouncer)
+      this.stateSince.set(site.name, at.getTime())
+      seedSiteAnnounced(this.ctx.db, site.name, debouncer.state)
     }
     const from = debouncer.state
-    const confirmed = debouncer.observe(result.network)
+    // Neither node answering over SSH says more about the coordinator (overload, its own network)
+    // than about the VPN, so it is no verdict at all (R-H3): the confirmed state stays.
+    const blind = !local.reachable && !remote.reachable
+    if(blind) this.log(`health ${site.name}: no node answered over SSH, keeping ${debouncer.state} (${result.detail})`)
+    const confirmed = blind ? null : debouncer.observe(result.network, health.confirmChecks)
 
     persistSiteHealth(this.ctx.db, site.name, { ...result, network: debouncer.state }, at.toISOString())
-    if(confirmed) await notifyTransition(this.nonBlockingCtx, site.name, from, confirmed, result.detail)
+    if(confirmed) {
+      this.stateSince.set(site.name, at.getTime())
+      this.alert(adminTransitionMessage(site.name, from, confirmed, result.detail))
+    }
+    this.announce(site.name, debouncer.state, at.getTime() - (this.stateSince.get(site.name) ?? at.getTime()), health.announceAfterMin * 60_000)
+  }
+
+  private announce(site: string, state: NetworkState, sinceMs: number, delayMs: number) {
+    const announced = readSiteAnnounced(this.ctx.db, site) ?? state
+    const next = nextAnnouncement(announced, state, sinceMs, delayMs)
+    if(!next) return
+    writeSiteAnnounced(this.ctx.db, site, next)
+    if(this.ctx.config().telegram.announceOutages) this.alert(announceMessage(next), { announce: true })
   }
 
   // --- geo (R-L2, R-L7) ---

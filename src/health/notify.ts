@@ -1,4 +1,3 @@
-import type { AppContext } from '../context'
 import type { NetworkState } from '../types'
 
 // R-H4 wording. Admin text is technical; the users' chat gets a short plain phrase.
@@ -15,22 +14,23 @@ const ANNOUNCE: Record<NetworkState, string> = {
   down: 'VPN сейчас недоступен. Уже чиним.',
 }
 
-export function siteTransitionMessages(site: string, from: NetworkState, to: NetworkState, detail?: string): { admin: string, announce: string | null } {
-  const admin = `площадка ${site}: ${from} → ${to} (${ADMIN_REASON[to]})` + (detail ? `\n${detail}` : '')
+export function adminTransitionMessage(site: string, from: NetworkState, to: NetworkState, detail?: string): string {
+  return `площадка ${site}: ${from} → ${to} (${ADMIN_REASON[to]})` + (detail ? `\n${detail}` : '')
+}
 
-  return { admin, announce: from === to ? null : ANNOUNCE[to] }
+export function announceMessage(state: NetworkState): string {
+  return ANNOUNCE[state]
 }
 
 /**
- * Admin alert always; the users' chat only when announceOutages is on. Relies on
- * `alert(text, { announce: true })` posting to the users' chat only (not admins again).
+ * Users'-chat announcement policy (R-H4), pure. `announced` is what the chat was last told,
+ * `confirmed` the debounced state and `sinceMs` how long it has held. An outage (or a change
+ * between degraded and down) is announced once it has lasted `delayMs`; recovery is announced
+ * right away, but only if the outage itself was announced. Returns the state to announce, or null.
  */
-export async function notifyTransition(ctx: AppContext, site: string, from: NetworkState, to: NetworkState, detail?: string): Promise<void> {
-  const { admin, announce } = siteTransitionMessages(site, from, to, detail)
+export function nextAnnouncement(announced: NetworkState, confirmed: NetworkState, sinceMs: number, delayMs: number): NetworkState | null {
+  if(confirmed === announced) return null
+  if(confirmed === 'ok') return 'ok'
 
-  await ctx.alert(admin)
-
-  if(announce && ctx.config().telegram.announceOutages) {
-    await ctx.alert(announce, { announce: true })
-  }
+  return sinceMs >= delayMs ? confirmed : null
 }

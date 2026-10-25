@@ -128,6 +128,10 @@ const migrations: string[] = [
     updated_by INTEGER
   );
   `,
+  `
+  -- Network state last announced to the users' chat (R-H4); NULL = same as network.
+  ALTER TABLE sites ADD COLUMN announced TEXT;
+  `,
 ]
 
 export function openDb(file: string): Db {
