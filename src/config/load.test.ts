@@ -59,6 +59,16 @@ describe('parseConfigText', () => {
     expect(result.errors).toContain('telegram.chatId: expected a group chat id (negative, e.g. -1001234567890); positive ids are users')
   })
 
+  it('rejects too small or overlapping internal subnets', () => {
+    const tiny = parseConfigText(`${exampleText}\ntunnel:\n  subnet: 10.255.0.0/31\n`, env)
+    expect(tiny.ok).toBe(false)
+    if(!tiny.ok) expect(tiny.errors).toContain('tunnel.subnet: prefix must be /30 or shorter')
+
+    const overlap = parseConfigText(exampleText.replace('subnet: 10.66.0.0/16', 'subnet: 10.255.0.0/16'), env)
+    expect(overlap.ok).toBe(false)
+    if(!overlap.ok) expect(overlap.errors).toContain('tunnel.subnet: overlaps clients.subnet 10.255.0.0/16')
+  })
+
   it('reports YAML syntax errors and empty documents', () => {
     const broken = parseConfigText('telegram: [unclosed', env)
     expect(broken.ok).toBe(false)

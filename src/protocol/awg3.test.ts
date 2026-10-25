@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { getProfile } from './index'
-import { AWG3_PARAM_KEYS, generateAwg3Params } from './awg3'
+import { generateAwg3Params } from './awg3'
 
 describe('awg3 profile', () => {
   it('is returned by getProfile with every key it declares', () => {
     const profile = getProfile('awg3')
     expect(profile.name).toBe('awg3')
-    expect(Object.keys(profile.generateParams()).sort()).toEqual([...AWG3_PARAM_KEYS].sort())
+    expect(Object.keys(profile.generateParams()).sort()).toEqual([
+      'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4', 'I1',
+      'HeaderProtectionKey', 'RekeyAfterTime', 'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout',
+      'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies',
+    ].sort())
   })
 
   it('generates what the kernel module accepts with header protection', () => {

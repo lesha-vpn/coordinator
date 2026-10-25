@@ -35,16 +35,6 @@ export async function parseDbipLines(lines: AsyncIterable<string> | Iterable<str
   return rangesToCidrs(ranges)
 }
 
-export function parseDbipCsv(text: string, country: string): string[] {
-  const cc = country.toUpperCase()
-  const ranges: Range[] = []
-  for(const line of text.split('\n')) {
-    const range = parseDbipLine(line, cc)
-    if(range) ranges.push(range)
-  }
-  return rangesToCidrs(ranges)
-}
-
 export interface FetchCountryOpts {
   fetch?: typeof fetch
   now?: Date

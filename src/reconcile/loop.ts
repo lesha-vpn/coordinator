@@ -105,6 +105,10 @@ function isHostKeyMismatch(err: unknown): boolean {
   return err instanceof HostKeyMismatchError || (err instanceof Error && err.name === 'HostKeyMismatchError')
 }
 
+function isSshAuthError(err: unknown): boolean {
+  return err instanceof SshAuthError || (err instanceof Error && err.name === 'SshAuthError')
+}
+
 export class Reconciler implements ReconcilerControl {
   private readonly locks = new Map<string, NodeLock>()
   private readonly debouncers = new Map<string, Debouncer>()
@@ -123,6 +127,8 @@ export class Reconciler implements ReconcilerControl {
   private readonly probes = new Map<string, ProbeRecord>()
   private timers: NodeJS.Timeout[] = []
   private eventTimer: NodeJS.Timeout | null = null
+  /** Set by stop(): work already in flight must not schedule more (event cycles, queued follow-ups). */
+  private stopped = false
   private eventNodes = new Set<string>()
   private readonly now: () => Date
   private readonly onPeersChanged = () => {
@@ -173,6 +179,7 @@ export class Reconciler implements ReconcilerControl {
   // --- triggers ---
 
   start(): void {
+    this.stopped = false
     this.ctx.events.on('peers-changed', this.onPeersChanged)
     this.ctx.events.on('identity-changed', this.onIdentityChanged)
     const guard = (what: string, p: Promise<unknown>) => p.catch(err => this.log(`${what} failed: ${errorMessage(err)}`))
@@ -186,6 +193,7 @@ export class Reconciler implements ReconcilerControl {
   }
 
   stop(): void {
+    this.stopped = true
     this.ctx.events.off('peers-changed', this.onPeersChanged)
     this.ctx.events.off('identity-changed', this.onIdentityChanged)
     for(const timer of this.timers) clearInterval(timer)
@@ -197,7 +205,7 @@ export class Reconciler implements ReconcilerControl {
 
   // Coalesces bursts (e.g. several configs revoked at once) into one scoped cycle (R-P4).
   private scheduleEventCycle() {
-    if(this.eventTimer) return
+    if(this.eventTimer || this.stopped) return
     this.eventTimer = setTimeout(() => {
       this.eventTimer = null
       const nodes = this.eventNodes
@@ -259,7 +267,8 @@ export class Reconciler implements ReconcilerControl {
       const next = this.queued
       if(next) {
         this.queued = null
-        this.startCycle(next.opts).then(next.resolve, next.reject)
+        if(this.stopped) next.reject(new Error('reconciler stopped'))
+        else this.startCycle(next.opts).then(next.resolve, next.reject)
       }
     })
     this.running = cycle
@@ -396,20 +405,26 @@ export class Reconciler implements ReconcilerControl {
     const retire = this.deps.retire
     const old = row.retired_address
     if(!retire || !old) return
-    const clear = () => this.ctx.db.prepare('UPDATE hosts SET retired_address = NULL, retired_at = NULL WHERE node = ?').run(target.node)
+    // Forget the alert too, so a later replacement with another unreachable old host is reported again
+    const clear = () => {
+      this.ctx.db.prepare('UPDATE hosts SET retired_address = NULL, retired_at = NULL WHERE node = ?').run(target.node)
+      this.retireAlerted.delete(target.node)
+    }
 
     try {
       const result = await retire(this.deps.provisionDeps, { host: old, ssh: target.ssh }, target.addresses)
       clear()
-      this.retireAlerted.delete(target.node)
       if(result === 'retired') this.alert(`${target.node}: на старом сервере ${old} остановлен AWG, его можно удалять`)
     } catch(err) {
-      if(isHostKeyMismatch(err) || err instanceof SshAuthError || (err instanceof Error && err.name === 'SshAuthError')) {
+      if(isHostKeyMismatch(err) || isSshAuthError(err)) {
         clear()
         return
       }
       const since = row.retired_at ? Date.parse(row.retired_at) : this.now().getTime()
-      if(this.now().getTime() - since >= RETIRE_GIVE_UP_MS) clear()
+      if(this.now().getTime() - since >= RETIRE_GIVE_UP_MS) {
+        clear()
+        return
+      }
       if(!this.retireAlerted.has(target.node)) {
         this.retireAlerted.add(target.node)
         this.alert(`${target.node}: не удалось остановить AWG на старом сервере ${old}: ${errorMessage(err)}\n`

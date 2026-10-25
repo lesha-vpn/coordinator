@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { cidrToRange } from '../geo/cidr'
 
 // Declarative coordinator config (spec section 5). Only addresses, credentials and
 // policy live here; keys, ports, obfuscation params and internal addresses are node
@@ -13,6 +14,10 @@ const cidr = z.string().regex(
   /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}\/(3[0-2]|[12]?\d)$/,
   'expected an IPv4 CIDR'
 )
+
+// Internal subnets need at least hosts .1 and .2 (gateway/LOCAL and the first client/REMOTE):
+// a /31 or /32 passed the schema and then failed every render cycle.
+const internalSubnet = cidr.refine(value => Number(value.split('/')[1]) <= 30, 'prefix must be /30 or shorter')
 
 // "203.0.113.10" or "203.0.113.10/24"; the prefix is informational only.
 const hostAddress = z.string().regex(
@@ -73,13 +78,13 @@ export const configSchema = z.object({
     listen: z.string().regex(/^[^:]+:\d+$/, 'expected host:port').default('127.0.0.1:9469'),
   }).optional(),
   clients: z.object({
-    subnet: cidr.default('10.66.0.0/16'),
+    subnet: internalSubnet.default('10.66.0.0/16'),
     mtu: z.number().int().min(1200).max(1500).default(1280),
     dns: z.array(ipv4).min(1).default(['1.1.1.1', '8.8.8.8']),
     protocol: protocolName.default('awg3'),
   }).prefault({}),
   tunnel: z.object({
-    subnet: cidr.default('10.255.0.0/30'),
+    subnet: internalSubnet.default('10.255.0.0/30'),
     mtu: z.number().int().min(1200).max(1500).default(1380),
     protocol: protocolName.default('awg3'),
   }).prefault({}),
@@ -96,6 +101,14 @@ export const configSchema = z.object({
     sites => new Set(sites.map(site => site.name)).size === sites.length,
     'site names must be unique'
   ),
+}).superRefine((config, ctx) => {
+  // Overlapping subnets would hand clients the tunnel's addresses (10.255.0.0/16 for clients
+  // allocates 10.255.0.2, REMOTE's awgt address) and break routing silently.
+  const [cs, ce] = cidrToRange(config.clients.subnet)
+  const [ts, te] = cidrToRange(config.tunnel.subnet)
+  if(cs <= te && ts <= ce) {
+    ctx.addIssue({ code: 'custom', path: ['tunnel', 'subnet'], message: `overlaps clients.subnet ${config.clients.subnet}` })
+  }
 })
 
 export type CoordinatorConfig = z.infer<typeof configSchema>

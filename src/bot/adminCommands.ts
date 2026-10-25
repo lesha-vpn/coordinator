@@ -6,6 +6,7 @@ import type { ReconcileReport, ReconcilerControl } from '../reconcile/control'
 import { appVersionStats } from '../services/auth'
 import { getDownloadUrl, normalizeDownloadUrl, setDownloadUrl } from '../services/settings'
 import { findUserByUsername, getUser, revokeUser, unrevokeUser } from '../services/users'
+import type { UserRow } from '../types'
 import { getKnownHost } from '../ssh/knownHosts'
 import { nodeName, type HostRow } from '../types'
 import type { Messenger } from './messenger'
@@ -153,35 +154,32 @@ async function runAndReport(messenger: Messenger, chatId: number, action: () => 
   }
 }
 
-async function revokeUserCommand(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {
+/** `<@username|id>` argument of /revoke_user and /unrevoke_user; replies itself when it can't resolve one. */
+async function resolveUserArg(ctx: AppContext, messenger: Messenger, chatId: number, command: string, arg: string | undefined) {
   if(!arg) {
-    await messenger.sendMessage(chatId, 'Использование: /revoke_user <@username|id>')
-    return
+    await messenger.sendMessage(chatId, `Использование: /${command} <@username|id>`)
+    return null
   }
   const user = /^\d+$/.test(arg) ? getUser(ctx.db, Number(arg)) : findUserByUsername(ctx.db, arg)
-  if(!user) {
-    await messenger.sendMessage(chatId, `Пользователь ${arg} не найден`)
-    return
-  }
+  if(!user) await messenger.sendMessage(chatId, `Пользователь ${arg} не найден`)
+  return user
+}
+
+const who = (user: UserRow) => user.username ? `@${user.username} (${user.tg_id})` : String(user.tg_id)
+
+async function revokeUserCommand(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {
+  const user = await resolveUserArg(ctx, messenger, chatId, 'revoke_user', arg)
+  if(!user) return
   const { configs, tokens } = revokeUser(ctx, user.tg_id)
-  const who = user.username ? `@${user.username} (${user.tg_id})` : String(user.tg_id)
-  await messenger.sendMessage(chatId, `${who} отозван: конфигов ${configs}, токенов устройств ${tokens}`)
+  await messenger.sendMessage(chatId, `${who(user)} отозван: конфигов ${configs}, токенов устройств ${tokens}`)
 }
 
 async function unrevokeUserCommand(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {
-  if(!arg) {
-    await messenger.sendMessage(chatId, 'Использование: /unrevoke_user <@username|id>')
-    return
-  }
-  const user = /^\d+$/.test(arg) ? getUser(ctx.db, Number(arg)) : findUserByUsername(ctx.db, arg)
-  if(!user) {
-    await messenger.sendMessage(chatId, `Пользователь ${arg} не найден`)
-    return
-  }
-  const who = user.username ? `@${user.username} (${user.tg_id})` : String(user.tg_id)
+  const user = await resolveUserArg(ctx, messenger, chatId, 'unrevoke_user', arg)
+  if(!user) return
   await messenger.sendMessage(chatId, unrevokeUser(ctx, user.tg_id)
-    ? `${who}: доступ возвращён, при следующем обращении к боту (если он в чате) снова сможет выпускать конфиги`
-    : `${who} не был отозван`)
+    ? `${who(user)}: доступ возвращён, при следующем обращении к боту (если он в чате) снова сможет выпускать конфиги`
+    : `${who(user)} не был отозван`)
 }
 
 async function downloadUrlCommand(ctx: AppContext, messenger: Messenger, chatId: number, adminId: number, arg: string | undefined) {

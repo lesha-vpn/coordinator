@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getProfile } from './index'
 import {
-  AWG2_PARAM_KEYS, COOKIE_JUNK_SIZE_MAX, HEADER_MAX, HEADER_MIN, INIT_JUNK_SIZE_MAX, JMAX_LIMIT,
+  COOKIE_JUNK_SIZE_MAX, HEADER_MAX, HEADER_MIN, INIT_JUNK_SIZE_MAX, JMAX_LIMIT,
   JUNK_PACKET_SIZE_MIN, MESSAGE_SIZES, RESPONSE_JUNK_SIZE_MAX, generateAwg2Params, generateHeaderRanges,
 } from './awg2'
 
@@ -20,8 +20,9 @@ describe('awg2 profile', () => {
   it('is returned by getProfile', () => {
     const profile = getProfile('awg2')
     expect(profile.name).toBe('awg2')
-    expect(profile.paramKeys).toEqual(AWG2_PARAM_KEYS)
-    expect(Object.keys(profile.generateParams()).sort()).toEqual([...AWG2_PARAM_KEYS].sort())
+    expect(Object.keys(profile.generateParams()).sort()).toEqual(
+      ['Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4'].sort(),
+    )
   })
 
   it('throws on unknown profile', () => {

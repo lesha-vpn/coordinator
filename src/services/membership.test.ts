@@ -6,7 +6,7 @@ import type { AppContext } from '../context'
 import type { CoordinatorConfig } from '../config/schema'
 import { getUser, markMembershipChecked, suspendUser, upsertUser } from './users'
 import {
-  createTelegramMemberChecker, ensureMemberFresh, handleChatMemberUpdate, sweepMembership,
+  createTelegramMemberChecker, dedupeChecker, ensureMemberFresh, handleChatMemberUpdate, sweepMembership,
 } from './membership'
 import type { MemberChecker, MembershipStatus } from './membership'
 
@@ -74,6 +74,32 @@ describe('createTelegramMemberChecker', () => {
     expect(r.reason).toMatch(/check failed: ETIMEDOUT/)
     expect(get).toHaveBeenCalledTimes(3)
   })
+
+  it('gives up on a call that hangs past timeoutMs', async () => {
+    const get = vi.fn(() => new Promise<never>(() => {}))
+    const check = createTelegramMemberChecker(get, -100, { retries: 1, delayMs: 0, timeoutMs: 20 })
+    const r = await check(1)
+    expect(r.status).toBe('unknown')
+    expect(r.reason).toMatch(/timed out/)
+  })
+})
+
+describe('dedupeChecker', () => {
+  it('shares one in-flight call per user and forgets it once settled', async () => {
+    let release!: () => void
+    const inner = vi.fn<MemberChecker>(() => new Promise(res => {
+      release = () => res({ status: 'member', reason: 'member' })
+    }))
+    const check = dedupeChecker(inner)
+    const a = check(1)
+    const b = check(1)
+    expect(inner).toHaveBeenCalledTimes(1)
+    release()
+    expect(await a).toEqual(await b)
+
+    void check(1)
+    expect(inner).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('sweepMembership', () => {
@@ -101,6 +127,16 @@ describe('sweepMembership', () => {
 
     expect(getUser(ctx.db, 1)!.membership_checked_at).not.toBeNull()
     expect(getUser(ctx.db, 3)!.membership_checked_at).toBeNull()
+  })
+
+  it('skips revoked users', async () => {
+    const { ctx } = fakeCtx()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    addUserWithStuff(ctx.db, 1)
+    ctx.db.prepare('UPDATE users SET revoked_at = ? WHERE tg_id = 1').run(now())
+    const checker = checkerOf({ 1: 'member' })
+    expect(await sweepMembership(ctx, checker)).toEqual({ checked: 0, suspended: 0, unknown: 0 })
+    expect(checker).not.toHaveBeenCalled()
   })
 })
 

@@ -8,7 +8,7 @@ import { ensureSiteIdentities } from '../services/identity'
 import type { MembershipStatus } from '../services/membership'
 import { setDownloadUrl } from '../services/settings'
 import { exampleConfig } from '../services/testFixtures'
-import { getUser, upsertUser } from '../services/users'
+import { getUser, reactivateUser, suspendUser, upsertUser } from '../services/users'
 import { buildApi } from './server'
 
 let ctx: AppContext
@@ -146,8 +146,23 @@ describe('auth hook', () => {
     expect(res.statusCode).toBe(403)
     expect(res.json().error.code).toBe('not_member')
     expect(getUser(ctx.db, 1)!.status).toBe('suspended')
-    // suspension revoked the token for good
+    // suspension revoked the token for good: still 403 while suspended, 401 once reactivated
     membership.set(1, 'member')
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: auth(token) })).statusCode).toBe(403)
+    reactivateUser(ctx, 1)
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: auth(token) })).statusCode).toBe(401)
+  })
+
+  it('403 not_member on a token killed by suspension elsewhere (chat_member/sweep), 401 once back in the chat', async () => {
+    const token = await login()
+    suspendUser(ctx, 1)
+    const res = await app.inject({ method: 'GET', url: '/v1/me', headers: auth(token) })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().error.code).toBe('not_member')
+    // logout of a dead token stays a plain 401
+    expect((await app.inject({ method: 'POST', url: '/v1/auth/logout', headers: auth(token) })).statusCode).toBe(401)
+
+    reactivateUser(ctx, 1)
     expect((await app.inject({ method: 'GET', url: '/v1/me', headers: auth(token) })).statusCode).toBe(401)
   })
 

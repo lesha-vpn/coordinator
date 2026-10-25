@@ -7,7 +7,7 @@ import { AppContext, createEvents } from './context'
 import { DEFAULT_BACKUP_PUB, DEFAULT_DB_PATH, DEFAULT_SSH_KEY_DIR } from './paths'
 import { ensureCoordinatorKey } from './ssh/keys'
 import { ensureSiteIdentities } from './services/identity'
-import { createTelegramMemberChecker, handleChatMemberUpdate, sweepMembership } from './services/membership'
+import { createTelegramMemberChecker, dedupeChecker, handleChatMemberUpdate, sweepMembership } from './services/membership'
 import { buildApi } from './api/server'
 import { telegramMessenger } from './bot/messenger'
 import { drainPendingDeletions, handleUserCallback, handleUserMessage, resendStaleBotConfigs } from './bot/userCommands'
@@ -71,8 +71,16 @@ async function main() {
 
   const checker = createTelegramMemberChecker(
     (chatId, userId) => bot.getChatMember(chatId, userId),
-    config().telegram.chatId
+    () => config().telegram.chatId,
   )
+
+  // The API answers the app, which gives up after ~12 s: one short attempt, and a Telegram outage
+  // falls back to the cached status (ensureMemberFresh) instead of holding every request for minutes.
+  const apiChecker = dedupeChecker(createTelegramMemberChecker(
+    (chatId, userId) => bot.getChatMember(chatId, userId),
+    () => config().telegram.chatId,
+    { retries: 1, delayMs: 0, timeoutMs: 5_000 },
+  ))
 
   const reconciler = new Reconciler(ctx, {
     provision: provisionNode,
@@ -136,7 +144,7 @@ async function main() {
   watcher.on('change', () => reconciler.applyNow().catch(e => console.error('apply failed:', e)))
   watcher.start()
 
-  const api = buildApi(ctx, { checker })
+  const api = buildApi(ctx, { checker: apiChecker })
   const [host, port] = config().api.listen.split(':')
   await api.listen({ host, port: Number(port) })
   console.log(`API listening on ${config().api.listen}`)
@@ -156,10 +164,18 @@ async function main() {
   if(metricsListen) console.log(`metrics listening on ${metricsListen}`)
 
   // R-B1: hourly membership sweep, as in v1.
+  // With Telegram down a sweep can outlast the hour; never run two at once.
+  let sweeping = false
   cron.schedule('0 0 * * * *', () => {
+    if(sweeping) {
+      console.warn('membership sweep: previous run still in progress, skipped')
+      return
+    }
+    sweeping = true
     sweepMembership(ctx, checker)
       .then(result => console.log('membership sweep:', result))
       .catch(e => console.error('membership sweep failed:', e))
+      .finally(() => { sweeping = false })
   })
 
   // R-S5: daily encrypted backup to the admins.

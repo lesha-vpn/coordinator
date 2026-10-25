@@ -1,30 +1,15 @@
 import type { ObfuscationParams } from '../../types'
-import type { ClientPeer, LocalRenderInput, RemoteRenderInput } from './input'
+import { orderedParamEntries } from '../../protocol/params'
+import { ipToInt } from '../../geo/cidr'
+import { MARKS, type ClientPeer, type LocalRenderInput, type RemoteRenderInput } from './input'
 import { prefixLen, subnetHost } from './net'
 
-// Canonical AWG param order; anything unknown follows alphabetically so output stays deterministic.
-const PARAM_ORDER = [
-  'Jc', 'Jmin', 'Jmax', 'S1', 'S2', 'S3', 'S4', 'H1', 'H2', 'H3', 'H4', 'I1', 'I2', 'I3', 'I4', 'I5',
-  'HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime', 'RekeyTimeout',
-  'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts', 'RandomTrailers', 'DisableCookies',
-]
-
 export function paramLines(params: ObfuscationParams): string[] {
-  const rank = (k: string) => {
-    const i = PARAM_ORDER.indexOf(k)
-    return i === -1 ? PARAM_ORDER.length : i
-  }
-  return Object.keys(params)
-    .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))
-    .map(k => `${k} = ${params[k]}`)
-}
-
-function ipToNum(ip: string): number {
-  return ip.split('.').reduce((acc, o) => acc * 256 + Number(o), 0)
+  return orderedParamEntries(params).map(([k, v]) => `${k} = ${v}`)
 }
 
 function sortPeers(peers: ClientPeer[]): ClientPeer[] {
-  return [...peers].sort((a, b) => ipToNum(a.address) - ipToNum(b.address))
+  return [...peers].sort((a, b) => ipToInt(a.address) - ipToInt(b.address))
 }
 
 const hostCidr = (subnet: string, n: number) => `${subnetHost(subnet, n)}/${prefixLen(subnet)}`
@@ -62,11 +47,11 @@ export function renderLocalAwgt(input: LocalRenderInput): string {
     `Address = ${hostCidr(input.tunnelSubnet, 1)}`,
     `MTU = ${input.tunnelMtu}`,
     'Table = off',
-    'FwMark = 0x51',
+    `FwMark = ${MARKS.tunnelSource}`,
     // AWG requires both tunnel ends to use identical S/H params, so LOCAL takes REMOTE's.
     ...paramLines(remote.params),
-    'PostUp = ip route replace default dev awgt table 152',
-    'PostDown = ip route del default dev awgt table 152 || true',
+    `PostUp = ip route replace default dev awgt table ${MARKS.remoteTable}`,
+    `PostDown = ip route del default dev awgt table ${MARKS.remoteTable} || true`,
     '',
     '[Peer]',
     `PublicKey = ${remote.publicKey}`,

@@ -140,7 +140,10 @@ export function buildApi(ctx: AppContext, deps: ApiDeps): FastifyInstance {
         const token = bearer(req)
         if(!token) throw new ApiError(401, 'invalid_token')
         const res = authenticateToken(ctx.db, token, { appVersion: appVersion(req) })
-        if(!res.ok) throw new ApiError(401, 'invalid_token')
+        if(!res.ok) {
+          const loggingOut = req.routeOptions.url === '/v1/auth/logout'
+          throw res.error === 'not_member' && !loggingOut ? new ApiError(403, 'not_member') : new ApiError(401, 'invalid_token')
+        }
         req.auth = { tgId: res.tgId, username: res.username, tokenHash: res.tokenHash }
 
         if(req.routeOptions.url === '/v1/auth/logout') return

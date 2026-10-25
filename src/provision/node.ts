@@ -5,7 +5,7 @@ import type { CoordinatorKey } from '../ssh/keys'
 import type { NodeProbe } from '../health/evaluate'
 import { parseAwgDump } from '../health/dump'
 import { HOST_STATS_SCRIPT, STATS_LINE, parseHostStats, type HostStats } from '../metrics/hostStats'
-import { connectSsh, shellQuote, waitForSsh } from '../ssh/client'
+import { connectSsh, shellQuote, tail, waitForSsh } from '../ssh/client'
 import type { ConnectOptions, ExecResult, SshSession } from '../ssh/client'
 import {
   BOOTSTRAP_OK,
@@ -54,10 +54,13 @@ interface Marker { node?: unknown, appliedHash?: unknown }
 const MAX_REBOOTS = 2
 const REBOOT_WAIT_MS = 5 * 60_000
 const BOOT_ID_COMMAND = 'cat /proc/sys/kernel/random/boot_id'
+// apt alone may wait 10 min for the dpkg lock (first-boot unattended-upgrades), then full-upgrade
+// and the dkms build: killing the channel halfway leaves dpkg interrupted.
+const BOOTSTRAP_TIMEOUT_MS = 60 * 60_000
+// The probe runs every minute for every node under one guard; a hung node must not stall the others.
+const PROBE_TIMEOUT_MS = 30_000
 
-function tail(text: string, lines = 10): string {
-  return text.trimEnd().split('\n').slice(-lines).join('\n').slice(-1500)
-}
+const errorTail = (text: string) => tail(text, 10, 1500)
 
 function connectOptions(deps: ProvisionDeps, target: Pick<NodeTarget, 'host' | 'ssh'>): ConnectOptions {
   return {
@@ -118,7 +121,7 @@ async function bootstrap(ctx: Ctx, initial: SshSession): Promise<SshSession> {
 
   for(let reboots = 0; ; reboots++) {
     deps.onPhase?.('bootstrapping')
-    const res: ExecResult = await session.exec('bash -s', { stdin: bootstrapScript() })
+    const res: ExecResult = await session.exec('bash -s', { stdin: bootstrapScript(), timeoutMs: BOOTSTRAP_TIMEOUT_MS })
 
     if(res.code === 0) {
       // Exit 0 without the marker means bash stopped reading the script early (see wrapMain).
@@ -142,7 +145,7 @@ async function bootstrap(ctx: Ctx, initial: SshSession): Promise<SshSession> {
       const detail = res.stderr.split('\n').filter(l => l.trim() && !l.includes('amneziawg module build failed'))
       throw new Error(['amneziawg module build failed', ...detail.slice(-5)].join('\n').slice(0, 1500))
     }
-    throw new Error(`bootstrap failed (exit ${res.code}): ${tail(res.stderr || res.stdout)}`)
+    throw new Error(`bootstrap failed (exit ${res.code}): ${errorTail(res.stderr || res.stdout)}`)
   }
 }
 
@@ -180,11 +183,11 @@ async function apply(ctx: Ctx, session: SshSession): Promise<void> {
 
   if(res.code === EXIT_CODES.addressMissing) {
     const line = res.stderr.split('\n').find(l => l.includes('not present on host'))
-    throw new Error(line?.trim() || `apply failed (exit ${res.code}): ${tail(res.stderr)}`)
+    throw new Error(line?.trim() || `apply failed (exit ${res.code}): ${errorTail(res.stderr)}`)
   }
-  if(res.code !== 0) throw new Error(`apply failed (exit ${res.code}): ${tail(res.stderr || res.stdout)}`)
+  if(res.code !== 0) throw new Error(`apply failed (exit ${res.code}): ${errorTail(res.stderr || res.stdout)}`)
   if(!res.stdout.includes(`APPLIED ${target.hash}`)) {
-    throw new Error(`apply failed: no APPLIED ${target.hash} confirmation: ${tail(res.stdout)}`)
+    throw new Error(`apply failed: no APPLIED ${target.hash} confirmation: ${errorTail(res.stdout)}`)
   }
 }
 
@@ -252,7 +255,7 @@ export async function retireNode(
   try {
     const res = await session.run('bash -s', { stdin: retireScript(currentAddresses), timeoutMs: 60_000 })
     if(res.stdout.includes(SAME_HOST)) return 'same-host'
-    if(!res.stdout.includes(RETIRED)) throw new Error(`retire failed: ${tail(res.stdout)}`)
+    if(!res.stdout.includes(RETIRED)) throw new Error(`retire failed: ${errorTail(res.stdout)}`)
     return 'retired'
   } finally {
     session.close()
@@ -286,7 +289,7 @@ export async function probeNode(deps: ProvisionDeps, target: Pick<NodeTarget, 'n
 
   try {
     session = await connect(connectOptions(deps, target))
-    const res = await session.run(PROBE_COMMAND)
+    const res = await session.run(PROBE_COMMAND, { timeoutMs: PROBE_TIMEOUT_MS })
     return { reachable: true, ...splitProbeOutput(res.stdout) }
   } catch(err) {
     return { reachable: false, error: err instanceof Error ? err.message : String(err) }
