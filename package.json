@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "check-config": "node dist/scripts/checkConfig.js",
     "restore": "node dist/scripts/restore.js",
-    "update": "git pull --ff-only origin master && npm ci && npm run build && npm run pm2:reload",
+    "update": "sh bin/update.sh",
     "pm2:start": "pm2 start dist/index.js --name vpn-coordinator",
     "pm2:stop": "pm2 stop vpn-coordinator",
     "pm2:restart": "pm2 restart vpn-coordinator",
