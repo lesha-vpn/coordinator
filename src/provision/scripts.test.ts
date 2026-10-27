@@ -7,7 +7,7 @@ import type { RenderedFile } from '../types'
 import { NODE_PATHS } from '../render/node/input'
 import {
   applyCommand, applyScript, bootstrapScript, buildApplyBundle, disablePasswordScript,
-  installKeyScript, readMarkerCommand, renderMetaEnv, retireScript, shellQuote, type ApplyMeta,
+  GOST, installKeyScript, readMarkerCommand, renderMetaEnv, retireScript, shellQuote, type ApplyMeta,
 } from './scripts'
 
 function bashSyntaxOk(script: string): void {
@@ -169,7 +169,7 @@ exit 0
     const bin = path.join(tmp, 'bin')
     fs.mkdirSync(root)
     fs.mkdirSync(bin)
-    for(const name of ['ip', 'systemctl', 'awg', 'awg-quick', 'nft', 'sysctl']) {
+    for(const name of ['ip', 'systemctl', 'awg', 'awg-quick', 'nft', 'sysctl', 'id', 'useradd', 'chgrp', 'curl']) {
       fs.writeFileSync(path.join(bin, name), STUB, { mode: 0o755 })
     }
     env = {
@@ -325,6 +325,164 @@ exit 0
   })
 })
 
+describe('apply.sh with the SOCKS5 proxy (R-L8)', () => {
+  let tmp: string
+  let root: string
+  let log: string
+  let env: NodeJS.ProcessEnv
+
+  const STUB = `#!/bin/bash
+echo "$(basename "$0") $*" >> "$FAKE_LOG"
+case "$(basename "$0") $*" in
+  "ip -4 -o addr show") echo "2: eth0    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0" ;;
+  "ip link show dev "*) echo "5: $4: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420" ;;
+  "ip rule show") printf '100:\\tfrom all fwmark 0x51 lookup 151\\n101:\\tfrom all fwmark 0x52 lookup 152\\n' ;;
+  "id -u vpn-socks") [ -n "\${NO_USER:-}" ] && exit 1 ;;
+  "curl "*) while [ $# -gt 0 ]; do [ "$1" = -o ] && { echo fake > "$2"; }; shift; done ;;
+esac
+exit 0
+`
+  const base: RenderedFile[] = [
+    { path: `${NODE_PATHS.awgDir}/awgc.conf`, mode: 0o600, content: '[Interface]\nListenPort = 1\n' },
+    { path: `${NODE_PATHS.awgDir}/awgt.conf`, mode: 0o600, content: '[Interface]\nListenPort = 2\n' },
+    { path: NODE_PATHS.nftables, mode: 0o644, content: 'table inet vpn {}\n' },
+    { path: NODE_PATHS.routingScript, mode: 0o755, content: '#!/bin/sh\n' },
+    { path: NODE_PATHS.routingUnit, mode: 0o644, content: '[Unit]\n' },
+  ]
+  const socks = (users = 'alice A1\n', conf = 'services: []\n'): RenderedFile[] => [
+    ...base,
+    { path: NODE_PATHS.socksConf, mode: 0o640, content: conf },
+    { path: NODE_PATHS.socksUsers, mode: 0o640, content: users },
+    { path: NODE_PATHS.socksUnit, mode: 0o644, content: '[Unit]\n' },
+  ]
+  const meta: ApplyMeta = {
+    node: 'main/local', role: 'local', hash: 'h', coordinatorVersion: '2', addresses: ['10.0.0.5'], interfaces: ['awgc', 'awgt'],
+  }
+
+  function run(files: RenderedFile[], m: ApplyMeta = meta) {
+    fs.writeFileSync(log, '')
+    const stage = path.join(tmp, 'stage')
+    fs.mkdirSync(stage)
+    execFileSync('tar', ['-xf', '-', '-C', stage], { input: buildApplyBundle(files, m) })
+    const r = spawnSync('bash', [path.join(stage, 'apply.sh'), stage], { env })
+    return { status: r.status, stderr: r.stderr.toString(), calls: fs.readFileSync(log, 'utf8').trim().split('\n') }
+  }
+
+  function fakeGost(version: string) {
+    const bin = path.join(root, NODE_PATHS.gostBin)
+    fs.mkdirSync(path.dirname(bin), { recursive: true })
+    fs.writeFileSync(bin, `#!/bin/sh\necho "gost v${version} (go1.26 linux/amd64)"\n`, { mode: 0o755 })
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-socks-'))
+    root = path.join(tmp, 'root')
+    log = path.join(tmp, 'calls.log')
+    const bin = path.join(tmp, 'bin')
+    fs.mkdirSync(root)
+    fs.mkdirSync(bin)
+    for(const name of ['ip', 'systemctl', 'awg', 'awg-quick', 'nft', 'sysctl', 'id', 'useradd', 'chgrp', 'curl']) {
+      fs.writeFileSync(path.join(bin, name), STUB, { mode: 0o755 })
+    }
+    env = { PATH: `${bin}:${process.env.PATH}`, ROOT: root, FAKE_LOG: log }
+  })
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+  it('first apply creates the user, hands the files to its group and starts the proxy', () => {
+    fakeGost(GOST.version)
+    env.NO_USER = '1'
+    const r = run(socks())
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.calls).toContain('useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin vpn-socks')
+    expect(r.calls.filter(c => c.startsWith('curl'))).toEqual([])
+    expect(r.calls).toContain(`chgrp vpn-socks ${root}${NODE_PATHS.socksUsers}.vpn-new`)
+    expect(r.calls).toContain(`chgrp vpn-socks ${root}${NODE_PATHS.socksConf}.vpn-new`)
+    expect(r.calls.filter(c => c.startsWith('chgrp'))).toHaveLength(2)
+    expect(r.calls).toContain('systemctl restart vpn-socks')
+    expect(r.calls).toContain('systemctl -q is-active vpn-socks')
+    // The user exists before nftables (which names it) is loaded.
+    expect(r.calls.findIndex(c => c.startsWith('useradd'))).toBeLessThan(r.calls.findIndex(c => c.startsWith('nft -f')))
+    expect(fs.statSync(path.join(root, NODE_PATHS.socksUsers)).mode & 0o777).toBe(0o640)
+  })
+
+  it('a users-only change restarts nothing: gost re-reads the file', () => {
+    fakeGost(GOST.version)
+    run(socks())
+    const r = run(socks('alice A1\nbob B2\n'))
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(path.join(root, NODE_PATHS.socksUsers), 'utf8')).toBe('alice A1\nbob B2\n')
+    expect(r.calls.filter(c => /restart|daemon-reload/.test(c))).toEqual([])
+    expect(r.calls).toContain('systemctl -q enable --now vpn-socks')
+    expect(r.calls).not.toContain('useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin vpn-socks')
+  })
+
+  it('a conf change restarts the proxy', () => {
+    fakeGost(GOST.version)
+    run(socks())
+    const r = run(socks('alice A1\n', 'services: [x]\n'))
+    expect(r.calls).toContain('systemctl restart vpn-socks')
+    expect(r.calls.filter(c => c.includes('restart awg-quick'))).toEqual([])
+  })
+
+  it('a missing or old gost is downloaded and its sha256 checked; a failure leaves only the proxy pending', () => {
+    fakeGost('3.0.0')
+    const r = run(socks())
+    expect(r.calls.some(c => c.startsWith('curl ') && c.includes(`/v${GOST.version}/gost_${GOST.version}_linux_`))).toBe(true)
+    // The stubbed download is not the real archive.
+    expect(r.status).toBe(33)
+    expect(r.stderr).toContain('gost download: sha256 mismatch')
+    // The VPN itself was applied before the proxy step.
+    expect(r.calls).toContain(`nft -f ${root}${NODE_PATHS.nftables}`)
+    expect(r.calls).toContain('systemctl restart awg-quick@awgc')
+    expect(r.calls.filter(c => c.startsWith('systemctl') && c.includes('vpn-socks'))).toEqual([])
+    const pending = path.join(root, NODE_PATHS.marker.replace(/[^/]+$/, 'pending'))
+    expect(fs.readFileSync(pending, 'utf8').trim().split('\n')).toEqual([NODE_PATHS.socksConf, NODE_PATHS.socksUnit])
+    expect(fs.existsSync(path.join(root, NODE_PATHS.marker))).toBe(false)
+
+    // The retry touches only the proxy.
+    fakeGost(GOST.version)
+    const retry = run(socks())
+    expect(retry.stderr).toBe('')
+    expect(retry.status).toBe(0)
+    expect(retry.calls.filter(c => /restart/.test(c))).toEqual(['systemctl restart vpn-socks'])
+    expect(fs.existsSync(pending)).toBe(false)
+    expect(fs.existsSync(path.join(root, NODE_PATHS.marker))).toBe(true)
+  })
+
+  it('a proxy that does not stay up fails the apply', () => {
+    fakeGost(GOST.version)
+    const stub = path.join(tmp, 'bin', 'systemctl')
+    fs.writeFileSync(stub, STUB.replace('exit 0\n`', '').replace(/exit 0\n$/, '[ "$*" = "-q is-active vpn-socks" ] && exit 3\nexit 0\n'), { mode: 0o755 })
+    const r = run(socks())
+    expect(r.status).toBe(33)
+    expect(r.stderr).toContain('vpn-socks not running')
+  })
+
+  it('turning the proxy off stops it and removes its files', () => {
+    fakeGost(GOST.version)
+    run(socks())
+    const r = run(base)
+    expect(r.stderr).toBe('')
+    expect(r.status).toBe(0)
+    expect(r.calls).toContain('systemctl -q disable --now vpn-socks')
+    expect(r.calls).toContain('systemctl daemon-reload')
+    expect(fs.existsSync(path.join(root, NODE_PATHS.socksDir))).toBe(false)
+    expect(fs.existsSync(path.join(root, NODE_PATHS.socksUnit))).toBe(false)
+    expect(run(base).calls.filter(c => c.includes('vpn-socks'))).toEqual([])
+  })
+
+  it('a LOCAL host reused as REMOTE drops the proxy too', () => {
+    fakeGost(GOST.version)
+    run(socks())
+    const r = run(base.filter(f => f.path.endsWith('awgt.conf') || f.path === NODE_PATHS.nftables),
+      { ...meta, node: 'main/remote', role: 'remote', interfaces: ['awgt'] })
+    expect(r.status).toBe(0)
+    expect(r.calls).toContain('systemctl -q disable --now vpn-socks')
+    expect(fs.existsSync(path.join(root, NODE_PATHS.socksUsers))).toBe(false)
+  })
+})
+
 describe('retireScript', () => {
   let tmp: string
 
@@ -351,6 +509,7 @@ describe('retireScript', () => {
       'systemctl disable --now awg-quick@awgc',
       'systemctl disable --now awg-quick@awgt',
       'systemctl disable --now vpn-routing',
+      'systemctl disable --now vpn-socks',
       `rm -f ${NODE_PATHS.marker}`,
     ])
   })

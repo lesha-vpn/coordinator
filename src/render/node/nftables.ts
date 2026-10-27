@@ -1,4 +1,4 @@
-import { MARKS, NFT_TABLE, type LocalRenderInput, type RemoteRenderInput } from './input'
+import { MARKS, NFT_TABLE, SOCKS_USER, type LocalRenderInput, type RemoteRenderInput } from './input'
 import { subnetHost } from './net'
 
 // Renders the whole /etc/nftables.conf. `flush ruleset` + full definition in one file means
@@ -43,7 +43,7 @@ function chain(name: string, hook: string, rules: string[]): string[] {
   return [`  chain ${name} {`, `    ${hook}`, ...rules.map(r => `    ${r}`), '  }']
 }
 
-function inputChain(outer: string, sshPort: number, awgRule: string): string[] {
+function inputChain(outer: string, sshPort: number, ...openRules: string[]): string[] {
   return chain('input', 'type filter hook input priority filter; policy drop;', [
     'iifname "lo" accept',
     'ct state invalid drop',
@@ -51,7 +51,7 @@ function inputChain(outer: string, sshPort: number, awgRule: string): string[] {
     'meta l4proto icmp accept',
     `meta l4proto ipv6-icmp icmpv6 type { ${ICMPV6_TYPES.join(', ')} } accept`,
     `ip daddr ${bareIp(outer)} tcp dport ${sshPort} accept`,
-    awgRule,
+    ...openRules,
   ])
 }
 
@@ -65,16 +65,58 @@ function ruleset(body: string[][]): string {
   return lines.join('\n')
 }
 
+/**
+ * R-L8: the proxy's own outgoing connections get the client treatment (R-L3 marks, R-L6
+ * fail-closed, R-L4 NAT). `ct direction original` keeps its replies to proxy users out: those
+ * belong to connections the users opened and go back the normal way. Every rule matches the
+ * user itself: packets without a socket must fall through untouched.
+ */
+function socksChains(input: LocalRenderInput, tunnelSrc: string): { chains: string[][], nat: string[] } {
+  const mark = MARKS.viaRemote
+  const own = `meta skuid "${SOCKS_USER}" ct direction original`
+  const ownAddrs = [...new Set([input.addresses.client, input.addresses.outer, input.addresses.tunnel].map(bareIp))]
+  return {
+    chains: [
+      // type route: a changed mark re-runs the route lookup, so 0x52 takes table 152 (dev awgt).
+      chain('socks_route', 'type route hook output priority mangle; policy accept;', [
+        `${own} ip daddr @force_remote meta mark set ${mark} return`,
+        `${own} ip daddr @geo_home return`,
+        `${own} ip daddr @private return`,
+        `${own} meta mark set ${mark}`,
+      ]),
+      // Not into the node itself, the client subnet or the tunnel: only out to the internet.
+      chain('socks_out', 'type filter hook output priority filter; policy accept;', [
+        `${own} meta nfproto ipv6 reject`,
+        `${own} ip daddr @private reject`,
+        `${own} ip daddr { ${ownAddrs.join(', ')} } reject`,
+      ]),
+      // In output, oifname is still the device of the first route lookup (before socks_route's
+      // reroute); postrouting sees where the packet really goes.
+      chain('socks_post', 'type filter hook postrouting priority filter; policy accept;', [
+        `${own} meta mark ${mark} oifname != "awgt" drop`,
+        // The SYN's MSS came from the uplink route; awgt has a smaller MTU.
+        `${own} oifname "awgt" tcp flags syn tcp option maxseg size set rt mtu`,
+      ]),
+    ],
+    nat: [
+      `oifname "awgt" meta skuid "${SOCKS_USER}" snat ip to ${tunnelSrc}`,
+      `oifname != { "awgt", "awgc" } meta skuid "${SOCKS_USER}" snat ip to ${bareIp(input.addresses.outer)}`,
+    ],
+  }
+}
+
 export function renderLocalNft(input: LocalRenderInput): string {
   const mark = MARKS.viaRemote
   const tunnelSrc = subnetHost(input.tunnelSubnet, 1)
   const clients = input.clientSubnet
+  const socks = input.socks ? socksChains(input, tunnelSrc) : { chains: [], nat: [] }
   return ruleset([
     renderSet('geo_home', input.geoHome),
     renderSet('force_remote', input.forceRemote),
     renderSet('private', PRIVATE_RANGES),
     inputChain(input.addresses.outer, input.sshPort,
-      `ip daddr ${bareIp(input.addresses.client)} udp dport ${input.identity.awgc.listenPort} accept`),
+      `ip daddr ${bareIp(input.addresses.client)} udp dport ${input.identity.awgc.listenPort} accept`,
+      ...(input.socks ? [`ip daddr ${bareIp(input.addresses.client)} tcp dport ${input.socks.port} accept`] : [])),
     // R-L3: unmarked = home (main table), 0x52 = via REMOTE (table 152).
     chain('prerouting', 'type filter hook prerouting priority mangle; policy accept;', [
       `iifname "awgc" ip daddr @force_remote meta mark set ${mark} return`,
@@ -95,7 +137,9 @@ export function renderLocalNft(input: LocalRenderInput): string {
     chain('postrouting', 'type nat hook postrouting priority srcnat; policy accept;', [
       `oifname "awgt" ip saddr ${clients} snat ip to ${tunnelSrc}`,
       `oifname != { "awgt", "awgc" } ip saddr ${clients} snat ip to ${bareIp(input.addresses.outer)}`,
+      ...socks.nat,
     ]),
+    ...socks.chains,
   ])
 }
 

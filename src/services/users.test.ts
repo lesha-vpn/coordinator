@@ -142,7 +142,7 @@ describe('users', () => {
     addConfig(ctx.db, 1, 'suspended')
     addToken(ctx.db, 1)
 
-    expect(revokeUser(ctx, 1)).toEqual({ configs: 2, tokens: 1 })
+    expect(revokeUser(ctx, 1)).toEqual({ configs: 2, tokens: 1, socks: false })
     expect(getUser(ctx.db, 1)!.status).toBe('suspended')
     expect(states(ctx.db, 1)).toEqual(['revoked', 'revoked'])
     const rows = ctx.db.prepare('SELECT revoked_at FROM client_configs WHERE tg_id = 1').all() as { revoked_at: string | null }[]

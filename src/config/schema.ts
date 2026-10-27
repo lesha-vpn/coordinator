@@ -94,6 +94,10 @@ export const configSchema = z.object({
     confirmChecks: z.number().int().min(1).max(60).default(2),
     announceAfterMin: z.number().int().min(0).max(24 * 60).default(5),
   }).prefault({}),
+  // SOCKS5 proxy on every LOCAL (R-L8); off when absent. Accounts are per user, issued by /socks.
+  socks: z.object({
+    port: z.number().int().min(1).max(65535).default(1080),
+  }).optional(),
   sites: z.array(z.object({
     name: siteName,
     local: localNode,
@@ -102,8 +106,16 @@ export const configSchema = z.object({
     sites => new Set(sites.map(site => site.name)).size === sites.length,
     'site names must be unique'
   ),
+}).superRefine((config, issue) => {
+  if(!config.socks) return
+  for(const [i, site] of config.sites.entries()) {
+    if(site.local.ssh.port === config.socks.port) {
+      issue.addIssue({ code: 'custom', path: ['sites', i, 'local', 'ssh', 'port'], message: `ssh port collides with socks.port ${config.socks.port}` })
+    }
+  }
 })
 
 export type CoordinatorConfig = z.infer<typeof configSchema>
 export type SiteConfig = CoordinatorConfig['sites'][number]
+export type SocksConfig = NonNullable<CoordinatorConfig['socks']>
 export type SshConfig = z.infer<typeof ssh>

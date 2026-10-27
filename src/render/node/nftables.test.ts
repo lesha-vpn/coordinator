@@ -130,6 +130,64 @@ describe('renderLocalNft', () => {
   })
 })
 
+describe('renderLocalNft with the SOCKS5 proxy (R-L8)', () => {
+  const socks = { port: 1080, users: [{ login: 'alice', password: 'P' }], dns: ['1.1.1.1'] }
+  const out = renderLocalNft(localInput({ socks }))
+  const chainOf = (name: string) => out.slice(out.indexOf(`chain ${name} {`), out.indexOf('\n  }', out.indexOf(`chain ${name} {`)))
+
+  it('without it nothing changes', () => {
+    const plain = renderLocalNft(localInput())
+    expect(plain).not.toContain('vpn-socks')
+    expect(plain).not.toContain('tcp dport 1080')
+  })
+
+  it('opens the proxy port on LOCAL.client only', () => {
+    expect(out).toContain('ip daddr 203.0.113.10 tcp dport 1080 accept')
+    expect(out.match(/tcp dport 1080/g)).toHaveLength(1)
+  })
+
+  it('routes the proxy\'s own connections like client traffic, in the same order', () => {
+    const route = chainOf('socks_route')
+    expect(route).toContain('type route hook output priority mangle; policy accept;')
+    const own = 'meta skuid "vpn-socks" ct direction original'
+    const rules = [
+      `${own} ip daddr @force_remote meta mark set 0x52 return`,
+      `${own} ip daddr @geo_home return`,
+      `${own} ip daddr @private return`,
+      `${own} meta mark set 0x52\n`,
+    ]
+    const idx = rules.map(r => (route + '\n').indexOf(r))
+    expect(idx.every(i => i > 0)).toBe(true)
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx)
+  })
+
+  it('keeps the proxy off the node, the private ranges and IPv6', () => {
+    const own = 'meta skuid "vpn-socks" ct direction original'
+    const filter = chainOf('socks_out')
+    expect(filter).toContain('type filter hook output priority filter; policy accept;')
+    // Every rule names the proxy user: packets without a socket fall through untouched.
+    const rules = filter.split('\n').map(l => l.trim()).filter(l => /(accept|drop|reject)$/.test(l))
+    expect(rules).toEqual([
+      `${own} meta nfproto ipv6 reject`,
+      `${own} ip daddr @private reject`,
+      `${own} ip daddr { 203.0.113.10, 203.0.113.11, 203.0.113.12 } reject`,
+    ])
+  })
+
+  it('fail-closed and MSS clamp in postrouting, where oifname is the rerouted device', () => {
+    const post = chainOf('socks_post')
+    expect(post).toContain('type filter hook postrouting priority filter; policy accept;')
+    expect(post).toContain('meta skuid "vpn-socks" ct direction original meta mark 0x52 oifname != "awgt" drop')
+    expect(post).toContain('meta skuid "vpn-socks" ct direction original oifname "awgt" tcp flags syn tcp option maxseg size set rt mtu')
+    expect(chainOf('socks_out')).not.toContain('oifname')
+  })
+
+  it('NATs the proxy\'s traffic to the tunnel address or outer', () => {
+    expect(out).toContain('oifname "awgt" meta skuid "vpn-socks" snat ip to 10.255.0.1')
+    expect(out).toContain('oifname != { "awgt", "awgc" } meta skuid "vpn-socks" snat ip to 203.0.113.11')
+  })
+})
+
 describe('renderRemoteNft', () => {
   const out = renderRemoteNft(remoteInput())
 
@@ -178,4 +236,8 @@ describe.skipIf(!nftUsable)('nft -c', () => {
   it('accepts the LOCAL ruleset', () => check(renderLocalNft(localInput())))
   it('accepts the LOCAL ruleset with empty sets', () => check(renderLocalNft(localInput({ geoHome: [], forceRemote: [] }))))
   it('accepts the REMOTE ruleset', () => check(renderRemoteNft(remoteInput())))
+  // nft resolves user names at load time; the CI host has no vpn-socks user, root stands in.
+  it('accepts the LOCAL ruleset with the SOCKS5 proxy', () => check(
+    renderLocalNft(localInput({ socks: { port: 1080, users: [], dns: ['1.1.1.1'] } })).replaceAll('"vpn-socks"', '"root"'),
+  ))
 })
