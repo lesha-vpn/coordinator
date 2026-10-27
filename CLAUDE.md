@@ -41,12 +41,12 @@ Module map:
 - `config/` — `schema.ts` (zod schema, `CoordinatorConfig`), `load.ts` (YAML + `${VAR}` expansion, `DEFAULT_CONFIG_PATH`).
 - `db/index.ts` — SQLite schema with append-only migrations; every module uses the shared `Db` handle.
 - `types.ts` — shared domain types (node identity, rows).
-- `services/` — business logic shared by bot and API: `users` (keyed by Telegram id), `membership` (chat checks; Telegram errors are `unknown`, never `not-member`), `auth` (login codes, device tokens, rate limiting), `configs` (client config issuance/revocation, revisions), `identity` (per-site node keys, ports, obfuscation params).
-- `bot/` — `userCommands` (`/start`, `/info`, `/add`, `/remove`, `/rename`, `/login`, `/devices`), `adminCommands` (`/status`, `/apply`, `/trust`, `/rotate`, `/revoke_user`, `/backup`), `messenger` (thin Bot API seam for tests).
+- `services/` — business logic shared by bot and API: `users` (keyed by Telegram id), `membership` (chat checks; Telegram errors are `unknown`, never `not-member`), `auth` (login codes, device tokens, rate limiting), `configs` (client config issuance/revocation, revisions), `identity` (per-site node keys, ports, obfuscation params), `socks` (SOCKS5 proxy accounts, R-L8).
+- `bot/` — `userCommands` (`/start`, `/info`, `/add`, `/remove`, `/rename`, `/login`, `/devices`, `/socks`, `/socks_reset`), `adminCommands` (`/status`, `/apply`, `/trust`, `/rotate`, `/revoke_user`, `/backup`), `messenger` (thin Bot API seam for tests).
 - `api/server.ts` — fastify client API under `/v1` (`auth/login`, `auth/logout`, `me`, `configs` create/get/status/rename/revoke) plus `/healthz`.
-- `render/` — `clientConfig` (client `.conf`) and `node/` (awg confs, nftables, sysctl, routing/systemd files for LOCAL and REMOTE).
+- `render/` — `clientConfig` (client `.conf`) and `node/` (awg confs, nftables, sysctl, routing/systemd files for LOCAL and REMOTE; `socks` = gost conf, users file and unit for the optional SOCKS5 proxy on LOCAL).
 - `reconcile/` — `desired` (config + DB → files + `desiredHash`), `loop` (periodic and event-driven apply per node), `control` (interface the admin commands use).
-- `provision/` — `node` (bootstrap/apply over SSH), `scripts` (bash run on nodes: bootstrap, `apply.sh`; `SCRIPTS_VERSION`), `tar` (ustar writer for shipping the bundle via stdin).
+- `provision/` — `node` (bootstrap/apply over SSH), `scripts` (bash run on nodes: bootstrap, `apply.sh`; `SCRIPTS_VERSION`; pinned gost version + sha256 that `apply.sh` downloads for the proxy), `tar` (ustar writer for shipping the bundle via stdin).
 - `ssh/` — `client` (ssh2 wrapper, sudo for non-root users, runbook error strings), `keys` (coordinator key), `knownHosts` (TOFU pinning).
 - `health/` — `dump` (`awg show all dump` parser), `evaluate` (site health rules), `notify` (alert/announcement wording).
 - `geo/` — db-ip country lite download, CIDR math, cached geo sets in the DB.

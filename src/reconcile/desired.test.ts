@@ -7,6 +7,8 @@ import { createConfig } from '../services/configs'
 import { upsertUser } from '../services/users'
 import { exampleConfig } from '../services/testFixtures'
 import { updateGeoSet } from '../geo/store'
+import { ensureSocksAccount } from '../services/socks'
+import { suspendUser } from '../services/users'
 import { buildRenderInputs, buildTargets } from './desired'
 
 function makeCtx(patch: (c: CoordinatorConfig) => void = () => {}): AppContext {
@@ -16,6 +18,34 @@ function makeCtx(patch: (c: CoordinatorConfig) => void = () => {}): AppContext {
   ensureSiteIdentities(db, config)
   return { db, config: () => config, events: createEvents(), alert: async () => {} }
 }
+
+describe('SOCKS5 proxy (R-L8)', () => {
+  it('is off without the socks block', () => {
+    const ctx = makeCtx()
+    expect(buildRenderInputs(ctx, ctx.config().sites[0]).local.socks).toBeUndefined()
+    expect(buildTargets(ctx, ctx.config().sites[0], '2').local.files.some(f => f.path.includes('socks'))).toBe(false)
+  })
+
+  it('serves active users\' accounts and resolves via clients.dns; the hash follows account changes', () => {
+    const ctx = makeCtx(c => { c.socks = { port: 1081 } })
+    const site = ctx.config().sites[0]
+    upsertUser(ctx.db, 1, 'alice')
+    upsertUser(ctx.db, 2, 'bob')
+    ensureSocksAccount(ctx, 1)
+    ensureSocksAccount(ctx, 2)
+    const before = buildTargets(ctx, site, '2').local.hash
+    const socks = buildRenderInputs(ctx, site).local.socks!
+    expect(socks.port).toBe(1081)
+    expect(socks.dns).toEqual(['1.1.1.1', '8.8.8.8'])
+    expect(socks.users.map(u => u.login)).toEqual(['alice', 'bob'])
+
+    suspendUser(ctx, 2)
+    expect(buildRenderInputs(ctx, site).local.socks!.users.map(u => u.login)).toEqual(['alice'])
+    const after = buildTargets(ctx, site, '2')
+    expect(after.local.hash).not.toBe(before)
+    expect(after.remote.files.some(f => f.path.includes('socks'))).toBe(false)
+  })
+})
 
 describe('buildTargets', () => {
   it('builds both nodes from config + DB', () => {

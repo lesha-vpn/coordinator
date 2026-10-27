@@ -8,6 +8,7 @@ import { exampleConfig } from '../services/testFixtures'
 import { getUser, revokeUser, suspendUser, upsertUser } from '../services/users'
 import { configView, createConfig, findConfigByName, getOwnConfig, listConfigs } from '../services/configs'
 import { listTokens } from '../services/auth'
+import { getSocksAccount } from '../services/socks'
 import { hashSecret } from '../crypto/tokens'
 import type { ClientConfigRow } from '../types'
 import type { Messenger } from './messenger'
@@ -459,5 +460,69 @@ describe('pending deletions (survive restarts)', () => {
     vi.clearAllTimers() // the process died
     expect(await drainPendingDeletions(t.ctx, t.messenger, new Date(Date.now() + AUTO_DELETE_MS))).toBe(3)
     expect(t.of('deleteMessage').map(c => c.args)).toEqual([[ALICE, 2], [ALICE, 3], [ALICE, 4]])
+  })
+})
+
+describe('/socks (R-L8)', () => {
+  function withSocks() {
+    const t = setup()
+    t.ctx.config().socks = { port: 1080 }
+    return t
+  }
+  const urlOf = (text: string) => /socks5:\/\/[^`]+/.exec(text)?.[0]
+
+  it('creates the account on first use: Telegram login, 16-char password, URL to LOCAL.client', async () => {
+    const t = withSocks()
+    await t.send('/socks', { username: 'Alice_1' })
+    const text = t.texts().at(-1)!
+    assertValidMarkdownV2(text)
+    expect(urlOf(text)).toMatch(/^socks5:\/\/Alice_1:[A-Za-z0-9]{16}@203\.0\.113\.10:1080$/)
+    expect(text).toContain('заработает через несколько секунд')
+    expect(getSocksAccount(t.ctx.db, ALICE)!.login).toBe('Alice_1')
+
+    // Shown again unchanged; the message deletes itself after 5 minutes
+    await t.send('/socks', { username: 'Alice_1' })
+    expect(urlOf(t.texts().at(-1)!)).toBe(urlOf(text))
+    expect(t.texts().at(-1)).not.toContain('заработает')
+    vi.advanceTimersByTime(AUTO_DELETE_MS)
+    expect(t.of('deleteMessage').map(c => c.args[1]).sort()).toEqual([1, 2])
+  })
+
+  it('falls back to tg<id> without a username', async () => {
+    const t = withSocks()
+    await t.send('/socks')
+    expect(urlOf(t.texts().at(-1)!)).toMatch(new RegExp(`^socks5://tg${ALICE}:`))
+  })
+
+  it('/socks_reset issues a new password', async () => {
+    const t = withSocks()
+    await t.send('/socks', { username: 'alice' })
+    const before = urlOf(t.texts().at(-1)!)
+    await t.send('/socks_reset', { username: 'alice' })
+    const text = t.texts().at(-1)!
+    assertValidMarkdownV2(text)
+    expect(text).toContain('Новый пароль')
+    expect(urlOf(text)).not.toBe(before)
+    expect(urlOf(text)).toBe(`socks5://alice:${getSocksAccount(t.ctx.db, ALICE)!.password}@203.0.113.10:1080`)
+  })
+
+  it('non-members get nothing', async () => {
+    const t = setup('not-member')
+    t.ctx.config().socks = { port: 1080 }
+    await t.send('/socks', { username: 'alice' })
+    expect(t.texts()).toEqual(['Сорри, тебя нет в списках'])
+    expect(getSocksAccount(t.ctx.db, ALICE)).toBeNull()
+  })
+
+  it('says so when the proxy is off and lists the commands only when on', async () => {
+    const t = setup()
+    await t.send('/socks')
+    expect(t.texts().at(-1)).toBe('SOCKS5-прокси на сервере не включён.')
+    await t.send('/info')
+    expect(t.texts().at(-1)).not.toContain('/socks')
+    t.ctx.config().socks = { port: 1080 }
+    await t.send('/info')
+    expect(t.texts().at(-1)).toContain('`/socks`')
+    expect(t.texts().at(-1)).toContain('`/socks_reset`')
   })
 })

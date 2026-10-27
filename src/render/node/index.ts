@@ -5,8 +5,17 @@ import { NODE_PATHS } from './input'
 import { renderAwgc, renderLocalAwgt, renderRemoteAwgt } from './awgConf'
 import { renderLocalNft, renderRemoteNft } from './nftables'
 import { renderRoutingScript, renderRoutingUnit, renderSysctl } from './system'
+import { renderSocksConf, renderSocksUnit, renderSocksUsers } from './socks'
 
 export function renderLocal(input: LocalRenderInput): RenderedFile[] {
+  // Readable by the proxy's group only: apply.sh hands them to vpn-socks (R-L8).
+  const socks: RenderedFile[] = input.socks
+    ? [
+        { path: NODE_PATHS.socksConf, mode: 0o640, content: renderSocksConf(input, input.socks) },
+        { path: NODE_PATHS.socksUsers, mode: 0o640, content: renderSocksUsers(input.socks) },
+        { path: NODE_PATHS.socksUnit, mode: 0o644, content: renderSocksUnit() },
+      ]
+    : []
   return [
     { path: `${NODE_PATHS.awgDir}/awgc.conf`, mode: 0o600, content: renderAwgc(input) },
     { path: `${NODE_PATHS.awgDir}/awgt.conf`, mode: 0o600, content: renderLocalAwgt(input) },
@@ -14,6 +23,7 @@ export function renderLocal(input: LocalRenderInput): RenderedFile[] {
     { path: NODE_PATHS.sysctl, mode: 0o644, content: renderSysctl() },
     { path: NODE_PATHS.routingScript, mode: 0o755, content: renderRoutingScript(input) },
     { path: NODE_PATHS.routingUnit, mode: 0o644, content: renderRoutingUnit() },
+    ...socks,
   ]
 }
 

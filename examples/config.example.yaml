@@ -40,6 +40,11 @@ routing:
   alwaysDirect: []                  # CIDR, всегда через LOCAL.outer
   alwaysRemote: []                  # CIDR, всегда через REMOTE
 
+# SOCKS5-прокси на LOCAL (спека R-L8, runbook 2.6); без блока выключен. Учётки пользователи
+# получают в боте: /socks, /socks_reset. Трафик идёт так же, как у VPN-клиентов.
+# socks:
+#   port: 1080                      # TCP на LOCAL.client; не равен ssh.port LOCAL
+
 sites:
   - name: main
     local:
