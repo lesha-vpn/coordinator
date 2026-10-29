@@ -1,6 +1,7 @@
 import type { Db } from '../db'
 import { nodeName, type NetworkState } from '../types'
 import type { HostStats } from '../metrics/hostStats'
+import type { ClientAcct } from '../metrics/acct'
 import { latestHandshake, type ParsedDump } from './dump'
 
 // Site health rules (spec section 8). Pure except persistSiteHealth; SSH probing lives elsewhere
@@ -20,6 +21,8 @@ export interface NodeProbe {
   nowSec?: number
   /** CPU/RAM/disk/network of the node for /metrics; absent if reading /proc failed. */
   stats?: HostStats
+  /** LOCAL's per-client bytes by route and direction for /metrics (R-O7). */
+  acct?: ClientAcct
 }
 
 export interface SiteHealth {

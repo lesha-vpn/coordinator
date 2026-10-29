@@ -4,6 +4,7 @@ import type { Db } from '../db'
 import type { CoordinatorKey } from '../ssh/keys'
 import type { NodeProbe } from '../health/evaluate'
 import { parseAwgDump } from '../health/dump'
+import { ACCT_LINE, ACCT_SCRIPT, parseAcct, type ClientAcct } from '../metrics/acct'
 import { HOST_STATS_SCRIPT, STATS_LINE, parseHostStats, type HostStats } from '../metrics/hostStats'
 import { connectSsh, shellQuote, waitForSsh } from '../ssh/client'
 import type { ConnectOptions, ExecResult, SshSession } from '../ssh/client'
@@ -262,22 +263,28 @@ export async function retireNode(
 /** Health probe (spec 8 R-H1). Never throws. */
 // The node's own clock comes along with the dump so handshake ages don't depend on clock skew
 // between the coordinator and the node; awg's exit code is preserved so failures still throw.
-// Host load figures for /metrics ride along; a failure there never fails the probe.
-export const PROBE_COMMAND = `awg show all dump; rc=$?; echo "__now__ $(date +%s)"; { ${HOST_STATS_SCRIPT}; } 2>/dev/null; exit $rc`
+// Host load figures and LOCAL's per-client counters for /metrics ride along; a failure there never
+// fails the probe.
+export const PROBE_COMMAND = `awg show all dump; rc=$?; echo "__now__ $(date +%s)"; { ${HOST_STATS_SCRIPT}; ${ACCT_SCRIPT}; } 2>/dev/null; exit $rc`
 
-export function splitProbeOutput(stdout: string): { dump: ReturnType<typeof parseAwgDump>, nowSec?: number, stats?: HostStats } {
+export function splitProbeOutput(stdout: string): { dump: ReturnType<typeof parseAwgDump>, nowSec?: number, stats?: HostStats, acct?: ClientAcct } {
   let nowSec: number | undefined
   const marked: string[] = []
+  const acctLines: string[] = []
   const lines = stdout.split('\n').filter(line => {
-    if(!STATS_LINE.test(line.replace(/\r$/, ''))) return true
-    const m = /^__now__ (\d+)\s*$/.exec(line)
-    if(m) nowSec = Number(m[1])
-    else marked.push(line)
+    if(ACCT_LINE.test(line)) acctLines.push(line)
+    else if(!STATS_LINE.test(line.replace(/\r$/, ''))) return true
+    else {
+      const m = /^__now__ (\d+)\s*$/.exec(line)
+      if(m) nowSec = Number(m[1])
+      else marked.push(line)
+    }
     return false
   })
   const dump = parseAwgDump(lines.join('\n'))
   const stats = parseHostStats(marked)
-  return { dump, ...(nowSec === undefined ? {} : { nowSec }), ...(stats ? { stats } : {}) }
+  const acct = parseAcct(acctLines)
+  return { dump, ...(nowSec === undefined ? {} : { nowSec }), ...(stats ? { stats } : {}), ...(acct ? { acct } : {}) }
 }
 
 export async function probeNode(deps: ProvisionDeps, target: Pick<NodeTarget, 'node' | 'host' | 'ssh'>): Promise<NodeProbe> {

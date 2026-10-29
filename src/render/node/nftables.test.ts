@@ -120,6 +120,23 @@ describe('renderLocalNft', () => {
     expect(fwd).toContain('iifname "awgc" accept')
   })
 
+  it('counts bytes per client and route after the drops, before any accept (R-O7)', () => {
+    const fwd = out.slice(out.indexOf('chain forward'))
+    const rules = [
+      'iifname "awgc" oifname "awgt" update @acct_remote_up { ip saddr }',
+      'iifname "awgc" oifname != "awgt" update @acct_direct_up { ip saddr }',
+      'iifname "awgt" oifname "awgc" update @acct_remote_down { ip daddr }',
+      'iifname != "awgt" oifname "awgc" update @acct_direct_down { ip daddr }',
+    ]
+    for(const rule of rules) {
+      expect(fwd.indexOf(rule)).toBeGreaterThan(fwd.indexOf('iifname "awgc" oifname "awgc" drop'))
+      expect(fwd.indexOf(rule)).toBeLessThan(fwd.indexOf('accept'))
+    }
+    for(const set of ['acct_direct_up', 'acct_direct_down', 'acct_remote_up', 'acct_remote_down']) {
+      expect(out).toContain(`  set ${set} {\n    type ipv4_addr\n    size 65535\n    flags dynamic\n    counter\n  }`)
+    }
+  })
+
   it('NATs client traffic to tunnel address or outer', () => {
     expect(out).toContain('oifname "awgt" ip saddr 10.66.0.0/16 snat ip to 10.255.0.1')
     expect(out).toContain('oifname != { "awgt", "awgc" } ip saddr 10.66.0.0/16 snat ip to 203.0.113.11')

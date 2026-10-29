@@ -3,12 +3,14 @@ import { CLIENT_IFACE, HANDSHAKE_FRESH_SEC, TUNNEL_IFACE } from '../health/evalu
 import type { ProbeRecord } from '../reconcile/loop'
 import { nodeName, type NodeRole } from '../types'
 import { Exposition, type Labels } from './exposition'
+import type { AcctSet } from './acct'
 import type { HostStats } from './hostStats'
 
 // Prometheus-format metrics, pushed to the stats server (R-O7). Nothing is sampled here except the coordinator's own host:
 // node figures come from the minute health probe (awg dump + /proc), the rest from the DB.
 // Counters are the raw awg / kernel counters; they reset with the interface or the host,
-// which Prometheus' rate()/increase() handle.
+// which Prometheus' rate()/increase() handle. Node samples carry the probe time: a skipped probe
+// would otherwise re-send the last counters stamped with a new time and draw a fake drop to zero.
 
 /** Probes older than this are not reported: a node being provisioned is skipped by health checks. */
 export const PROBE_STALE_MS = 5 * 60_000
@@ -32,6 +34,13 @@ interface ConfigRef {
 
 const NETWORK_STATES = ['ok', 'degraded', 'down'] as const
 
+const ACCT_METRICS: Record<AcctSet, { metric: string, route: string }> = {
+  acct_direct_up: { metric: 'vpn_client_route_upload_bytes_total', route: 'direct' },
+  acct_direct_down: { metric: 'vpn_client_route_download_bytes_total', route: 'direct' },
+  acct_remote_up: { metric: 'vpn_client_route_upload_bytes_total', route: 'remote' },
+  acct_remote_down: { metric: 'vpn_client_route_download_bytes_total', route: 'remote' },
+}
+
 function declareAll(m: Exposition) {
   m.declare('vpn_coordinator_info', 'gauge', 'Coordinator version')
   m.declare('vpn_users', 'gauge', 'Users by status (revoked = /revoke_user)')
@@ -42,6 +51,8 @@ function declareAll(m: Exposition) {
   m.declare('vpn_node_last_probe_timestamp_seconds', 'gauge', 'When the node was last probed')
   m.declare('vpn_client_upload_bytes_total', 'counter', 'Bytes received by LOCAL from the client config (client upload)')
   m.declare('vpn_client_download_bytes_total', 'counter', 'Bytes sent by LOCAL to the client config (client download)')
+  m.declare('vpn_client_route_upload_bytes_total', 'counter', 'Client upload by exit: route="direct" leaves LOCAL to the home country, "remote" goes via REMOTE (nft counters, reset on ruleset reload)')
+  m.declare('vpn_client_route_download_bytes_total', 'counter', 'Client download by exit, same routes as vpn_client_route_upload_bytes_total')
   m.declare('vpn_client_last_handshake_timestamp_seconds', 'gauge', 'Latest handshake of the client config')
   m.declare('vpn_clients_online', 'gauge', `Client configs with a handshake in the last ${HANDSHAKE_FRESH_SEC} s`)
   m.declare('vpn_users_online', 'gauge', `Users with a handshake in the last ${HANDSHAKE_FRESH_SEC} s`)
@@ -64,25 +75,25 @@ function declareAll(m: Exposition) {
   m.declare('vpn_node_network_transmit_bytes_total', 'counter', 'Bytes sent by network device')
 }
 
-function addHostStats(m: Exposition, labels: Labels, stats: HostStats) {
-  for(const [mode, seconds] of Object.entries(stats.cpuSeconds ?? {})) m.add('vpn_node_cpu_seconds_total', { ...labels, mode }, seconds)
-  if(stats.cpus !== undefined) m.add('vpn_node_cpus', labels, stats.cpus)
+function addHostStats(m: Exposition, labels: Labels, stats: HostStats, ts?: number) {
+  for(const [mode, seconds] of Object.entries(stats.cpuSeconds ?? {})) m.add('vpn_node_cpu_seconds_total', { ...labels, mode }, seconds, ts)
+  if(stats.cpus !== undefined) m.add('vpn_node_cpus', labels, stats.cpus, ts)
   if(stats.load) {
-    m.add('vpn_node_load1', labels, stats.load[0])
-    m.add('vpn_node_load5', labels, stats.load[1])
-    m.add('vpn_node_load15', labels, stats.load[2])
+    m.add('vpn_node_load1', labels, stats.load[0], ts)
+    m.add('vpn_node_load5', labels, stats.load[1], ts)
+    m.add('vpn_node_load15', labels, stats.load[2], ts)
   }
-  if(stats.uptimeSec !== undefined) m.add('vpn_node_uptime_seconds', labels, stats.uptimeSec)
-  if(stats.memTotalBytes !== undefined) m.add('vpn_node_memory_total_bytes', labels, stats.memTotalBytes)
-  if(stats.memAvailableBytes !== undefined) m.add('vpn_node_memory_available_bytes', labels, stats.memAvailableBytes)
-  if(stats.swapTotalBytes !== undefined) m.add('vpn_node_swap_total_bytes', labels, stats.swapTotalBytes)
-  if(stats.swapFreeBytes !== undefined) m.add('vpn_node_swap_free_bytes', labels, stats.swapFreeBytes)
-  if(stats.diskTotalBytes !== undefined) m.add('vpn_node_disk_total_bytes', labels, stats.diskTotalBytes)
-  if(stats.diskAvailableBytes !== undefined) m.add('vpn_node_disk_available_bytes', labels, stats.diskAvailableBytes)
+  if(stats.uptimeSec !== undefined) m.add('vpn_node_uptime_seconds', labels, stats.uptimeSec, ts)
+  if(stats.memTotalBytes !== undefined) m.add('vpn_node_memory_total_bytes', labels, stats.memTotalBytes, ts)
+  if(stats.memAvailableBytes !== undefined) m.add('vpn_node_memory_available_bytes', labels, stats.memAvailableBytes, ts)
+  if(stats.swapTotalBytes !== undefined) m.add('vpn_node_swap_total_bytes', labels, stats.swapTotalBytes, ts)
+  if(stats.swapFreeBytes !== undefined) m.add('vpn_node_swap_free_bytes', labels, stats.swapFreeBytes, ts)
+  if(stats.diskTotalBytes !== undefined) m.add('vpn_node_disk_total_bytes', labels, stats.diskTotalBytes, ts)
+  if(stats.diskAvailableBytes !== undefined) m.add('vpn_node_disk_available_bytes', labels, stats.diskAvailableBytes, ts)
   for(const [device, net] of Object.entries(stats.net)) {
     if(device === 'lo') continue
-    m.add('vpn_node_network_receive_bytes_total', { ...labels, device }, net.rxBytes)
-    m.add('vpn_node_network_transmit_bytes_total', { ...labels, device }, net.txBytes)
+    m.add('vpn_node_network_receive_bytes_total', { ...labels, device }, net.rxBytes, ts)
+    m.add('vpn_node_network_transmit_bytes_total', { ...labels, device }, net.txBytes, ts)
   }
 }
 
@@ -108,16 +119,17 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
   }
   for(const [status, n] of Object.entries(userCounts)) m.add('vpn_users', { status }, n)
 
-  const configs = db.prepare('SELECT id, tg_id, name, public_key, state FROM client_configs').all() as
-    { id: string, tg_id: number, name: string, public_key: string, state: string }[]
+  const configs = db.prepare('SELECT id, tg_id, name, public_key, address, state FROM client_configs').all() as
+    { id: string, tg_id: number, name: string, public_key: string, address: string, state: string }[]
   const configCounts: Record<string, number> = { active: 0, suspended: 0, revoked: 0 }
   const byKey = new Map<string, ConfigRef>()
+  const byAddress = new Map<string, ConfigRef>()
   for(const c of configs) {
     configCounts[c.state] = (configCounts[c.state] ?? 0) + 1
-    // A live config wins over a revoked one with the same key (keys are fresh per config anyway).
-    if(c.state !== 'revoked' || !byKey.has(c.public_key)) {
-      byKey.set(c.public_key, { id: c.id, name: c.name, tgId: c.tg_id, user: names.get(c.tg_id) ?? `tg:${c.tg_id}` })
-    }
+    const ref = { id: c.id, name: c.name, tgId: c.tg_id, user: names.get(c.tg_id) ?? `tg:${c.tg_id}` }
+    // A live config wins over a revoked one with the same key or address (addresses get reused).
+    if(c.state !== 'revoked' || !byKey.has(c.public_key)) byKey.set(c.public_key, ref)
+    if(c.state !== 'revoked' || !byAddress.has(c.address)) byAddress.set(c.address, ref)
   }
   for(const [state, n] of Object.entries(configCounts)) m.add('vpn_client_configs', { state }, n)
 
@@ -148,7 +160,8 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
       m.add('vpn_node_up', labels, fresh && probe.reachable ? 1 : 0)
       if(!fresh || !probe.reachable) continue
 
-      if(probe.stats) addHostStats(m, labels, probe.stats)
+      const ts = record.at.getTime()
+      if(probe.stats) addHostStats(m, labels, probe.stats, ts)
       if(role !== 'local' || !probe.dump) continue
 
       const nowSec = probe.nowSec ?? Math.floor(nowMs / 1000)
@@ -158,10 +171,10 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
         const ref = byKey.get(peer.publicKey)
         if(!ref) continue
         const peerLabels = { site: site.name, user: ref.user, tg_id: String(ref.tgId), config: ref.name, config_id: ref.id }
-        m.add('vpn_client_upload_bytes_total', peerLabels, peer.rxBytes)
-        m.add('vpn_client_download_bytes_total', peerLabels, peer.txBytes)
+        m.add('vpn_client_upload_bytes_total', peerLabels, peer.rxBytes, ts)
+        m.add('vpn_client_download_bytes_total', peerLabels, peer.txBytes, ts)
         if(peer.latestHandshake > 0) {
-          m.add('vpn_client_last_handshake_timestamp_seconds', peerLabels, peer.latestHandshake)
+          m.add('vpn_client_last_handshake_timestamp_seconds', peerLabels, peer.latestHandshake, ts)
           if(nowSec - peer.latestHandshake < HANDSHAKE_FRESH_SEC) {
             online.add(ref.id)
             onlineUsers.add(ref.tgId)
@@ -169,17 +182,25 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
         }
       }
       if(probe.dump.interfaces[CLIENT_IFACE]) {
-        m.add('vpn_clients_online', { site: site.name }, online.size)
-        m.add('vpn_users_online', { site: site.name }, onlineUsers.size)
+        m.add('vpn_clients_online', { site: site.name }, online.size, ts)
+        m.add('vpn_users_online', { site: site.name }, onlineUsers.size, ts)
+      }
+
+      for(const [set, counts] of Object.entries(probe.acct ?? {}) as [AcctSet, Record<string, number>][]) {
+        const { metric, route } = ACCT_METRICS[set]
+        for(const [address, bytes] of Object.entries(counts)) {
+          const ref = byAddress.get(address)
+          if(ref) m.add(metric, { site: site.name, user: ref.user, tg_id: String(ref.tgId), config: ref.name, config_id: ref.id, route }, bytes, ts)
+        }
       }
 
       const tunnel = probe.dump.interfaces[TUNNEL_IFACE]
       if(tunnel) {
         const sum = (f: 'rxBytes' | 'txBytes') => tunnel.peers.reduce((acc, p) => acc + p[f], 0)
-        m.add('vpn_tunnel_transmit_bytes_total', { site: site.name }, sum('txBytes'))
-        m.add('vpn_tunnel_receive_bytes_total', { site: site.name }, sum('rxBytes'))
+        m.add('vpn_tunnel_transmit_bytes_total', { site: site.name }, sum('txBytes'), ts)
+        m.add('vpn_tunnel_receive_bytes_total', { site: site.name }, sum('rxBytes'), ts)
         const hs = tunnel.peers.reduce((max, p) => Math.max(max, p.latestHandshake), 0)
-        if(hs > 0) m.add('vpn_tunnel_last_handshake_timestamp_seconds', { site: site.name }, hs)
+        if(hs > 0) m.add('vpn_tunnel_last_handshake_timestamp_seconds', { site: site.name }, hs, ts)
       }
     }
   }

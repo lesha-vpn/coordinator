@@ -11,7 +11,7 @@ import { createConfig } from '../services/configs'
 import { upsertUser } from '../services/users'
 import { exampleConfig } from '../services/testFixtures'
 import { getGeoSet, updateGeoSet } from '../geo/store'
-import { backoffMinutes, NodeLock, Reconciler, RETIRE_GIVE_UP_MS, type ReconcilerDeps } from './loop'
+import { backoffMinutes, HEALTH_LOCK_WAIT_MS, NodeLock, Reconciler, RETIRE_GIVE_UP_MS, type ReconcilerDeps } from './loop'
 
 const T0 = new Date('2026-10-12T00:00:00Z')
 
@@ -372,6 +372,22 @@ function probeWith(tunnelHandshake: number): NodeProbe {
 }
 
 describe('health', () => {
+  it('waits for a short cycle on the same tick instead of skipping the probe', async () => {
+    const h = setup()
+    await h.rec.runCycle()
+    let release!: () => void
+    h.provision.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ outcome: 'unchanged', bootstrapped: false }) }))
+    const cycle = h.rec.runCycle({ ignoreBackoff: true })
+    await new Promise(r => setTimeout(r, 0))
+    const health = h.rec.runHealth()
+    await new Promise(r => setTimeout(r, 10))
+    expect(h.probe).not.toHaveBeenCalled()
+    release()
+    await Promise.all([cycle, health])
+    expect(h.probe).toHaveBeenCalledTimes(2)
+    expect(h.rec.latestProbes().has('main/local')).toBe(true)
+  })
+
   const network = (h: Harness) => (h.ctx.db.prepare("SELECT network FROM sites WHERE name = 'main'").get() as { network: string }).network
   const chat = (h: Harness) => h.alerts.filter(a => a.announce).map(a => a.text)
 
@@ -465,16 +481,19 @@ describe('health', () => {
     expect(chat(h)).toEqual(['VPN сейчас недоступен. Уже чиним.'])
   })
 
-  it('seeds from the stored network state and skips a site whose node is being provisioned', async () => {
+  it('seeds from the stored network state and skips a site whose node stays busy past the wait', async () => {
     const h = setup()
     h.ctx.db.prepare("INSERT INTO sites (name, network) VALUES ('main', 'down')").run()
     h.probe.mockResolvedValue(probeWith(T0.getTime() / 1000 - 5))
 
     let release!: () => void
     h.provision.mockImplementation(() => new Promise(r => { release = () => r({ outcome: 'applied', bootstrapped: false }) }))
+    vi.useFakeTimers()
     const cycle = h.rec.runCycle({ nodes: new Set(['main/local']) })
-    await new Promise(r => setTimeout(r, 0))
-    await h.rec.runHealth()
+    await vi.advanceTimersByTimeAsync(0)
+    const health = h.rec.runHealth()
+    await vi.advanceTimersByTimeAsync(HEALTH_LOCK_WAIT_MS)
+    await health
     expect(h.probe).not.toHaveBeenCalled()
     release()
     await cycle

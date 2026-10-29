@@ -11,6 +11,7 @@ import { collectMetrics, PROBE_STALE_MS } from './collect'
 
 const NOW = new Date('2026-10-16T12:00:00Z')
 const NOW_SEC = NOW.getTime() / 1000
+const TS = NOW.getTime()
 
 function setup() {
   const db = openDb(':memory:')
@@ -71,21 +72,42 @@ describe('collectMetrics', () => {
     expect(out).toContain('vpn_users{status="active"} 2')
     expect(out).toContain('vpn_client_configs{state="active"} 3')
     expect(out).toContain('vpn_client_configs{state="revoked"} 1')
-    expect(out).toContain(`vpn_client_upload_bytes_total{site="main",user="@alice",tg_id="1",config="phone",config_id="${phone.id}"} 100`)
-    expect(out).toContain(`vpn_client_download_bytes_total{site="main",user="tg:2",tg_id="2",config="pc",config_id="${other.id}"} 8`)
-    expect(out).toContain(`vpn_client_last_handshake_timestamp_seconds{site="main",user="@alice",tg_id="1",config="laptop",config_id="${laptop.id}"} ${NOW_SEC - 60}`)
+    expect(out).toContain(`vpn_client_upload_bytes_total{site="main",user="@alice",tg_id="1",config="phone",config_id="${phone.id}"} 100 ${TS}`)
+    expect(out).toContain(`vpn_client_download_bytes_total{site="main",user="tg:2",tg_id="2",config="pc",config_id="${other.id}"} 8 ${TS}`)
+    expect(out).toContain(`vpn_client_last_handshake_timestamp_seconds{site="main",user="@alice",tg_id="1",config="laptop",config_id="${laptop.id}"} ${NOW_SEC - 60} ${TS}`)
     expect(out.some(l => l.includes('stranger'))).toBe(false)
-    expect(out).toContain('vpn_clients_online{site="main"} 2')
-    expect(out).toContain('vpn_users_online{site="main"} 1')
-    expect(out).toContain('vpn_tunnel_transmit_bytes_total{site="main"} 700')
-    expect(out).toContain('vpn_tunnel_receive_bytes_total{site="main"} 500')
+    expect(out).toContain(`vpn_clients_online{site="main"} 2 ${TS}`)
+    expect(out).toContain(`vpn_users_online{site="main"} 1 ${TS}`)
+    expect(out).toContain(`vpn_tunnel_transmit_bytes_total{site="main"} 700 ${TS}`)
+    expect(out).toContain(`vpn_tunnel_receive_bytes_total{site="main"} 500 ${TS}`)
     expect(out).toContain('vpn_node_up{node="main/local",site="main",role="local"} 1')
     expect(out).toContain('vpn_node_up{node="main/remote",site="main",role="remote"} 0')
-    expect(out).toContain('vpn_node_cpu_seconds_total{node="main/local",site="main",role="local",mode="idle"} 80')
-    expect(out).toContain('vpn_node_memory_available_bytes{node="main/local",site="main",role="local"} 400')
-    expect(out).toContain('vpn_node_network_transmit_bytes_total{node="main/local",site="main",role="local",device="eth0"} 20')
+    expect(out).toContain(`vpn_node_cpu_seconds_total{node="main/local",site="main",role="local",mode="idle"} 80 ${TS}`)
+    expect(out).toContain(`vpn_node_memory_available_bytes{node="main/local",site="main",role="local"} 400 ${TS}`)
+    expect(out).toContain(`vpn_node_network_transmit_bytes_total{node="main/local",site="main",role="local",device="eth0"} 20 ${TS}`)
     expect(out.some(l => l.includes('device="lo"'))).toBe(false)
     expect(out).toContain('vpn_node_cpus{node="coordinator",site="",role="coordinator"} 1')
+  })
+
+  it('splits client traffic by exit route from the nft counters', () => {
+    const { ctx, make } = setup()
+    const gone = make(1, 'old')
+    revokeConfig(ctx, 1, gone.id)
+    const phone = make(1, 'phone')
+    const probe = localProbe([])
+    probe.acct = {
+      acct_direct_up: { [phone.address]: 10, '10.66.99.99': 5 },
+      acct_direct_down: { [phone.address]: 300 },
+      acct_remote_up: { [phone.address]: 20 },
+      acct_remote_down: {},
+    }
+    const probes = new Map<string, ProbeRecord>([['main/local', { at: NOW, probe }]])
+    const out = lines(collectMetrics(ctx, { probes, version: 'x', now: NOW }))
+    const labels = `site="main",user="@alice",tg_id="1",config="phone",config_id="${phone.id}"`
+    expect(out).toContain(`vpn_client_route_upload_bytes_total{${labels},route="direct"} 10 ${TS}`)
+    expect(out).toContain(`vpn_client_route_download_bytes_total{${labels},route="direct"} 300 ${TS}`)
+    expect(out).toContain(`vpn_client_route_upload_bytes_total{${labels},route="remote"} 20 ${TS}`)
+    expect(out.filter(l => l.startsWith('vpn_client_route_'))).toHaveLength(3)
   })
 
   it('drops stale probes and escapes label values', () => {

@@ -245,6 +245,21 @@ describe('probeNode', () => {
     expect(probe.stats).toEqual({ cpus: 2, memTotalBytes: 102400, net: { eth0: { rxBytes: 5, txBytes: 6 } } })
   })
 
+  it('splits per-client nft counters off the dump', async () => {
+    const dump = 'awgc\tpriv\tpub\t51820\toff\n'
+    const set = (elem: string) => `{"nftables": [{"metainfo": {"version": "1.0.9"}}, {"set": {"family": "inet", "name": "x", "table": "vpn", "type": "ipv4_addr", "flags": ["dynamic"], "elem": [${elem}]}}]}`
+    const acct = [
+      `__acct__ acct_direct_up ${set('{"elem": {"val": "10.66.0.2", "counter": {"packets": 5, "bytes": 5140}}}')}`,
+      `__acct__ acct_remote_up ${set('')}`,
+      '__acct__ acct_direct_down ',
+    ].join('\n')
+    const w = world([{ respond: cmd => cmd === PROBE_COMMAND ? { stdout: dump + '__now__ 1700000100\n' + acct + '\n' } : undefined }])
+    const probe = await probeNode(deps(w), target)
+    expect(Object.keys(probe.dump!.interfaces)).toEqual(['awgc'])
+    expect(probe.stats).toBeUndefined()
+    expect(probe.acct).toEqual({ acct_direct_up: { '10.66.0.2': 5140 }, acct_remote_up: {} })
+  })
+
   it('reports unreachable on connect or command errors without throwing', async () => {
     const down = world([new Error('ssh timeout for 203.0.113.10: x')])
     expect(await probeNode(deps(down), target)).toEqual({ reachable: false, error: 'ssh timeout for 203.0.113.10: x' })

@@ -29,11 +29,12 @@ export class Exposition {
     return this
   }
 
-  add(name: string, labels: Labels, value: number): this {
+  /** `timestampMs` marks when the value was measured; without it the receiver stamps it on arrival. */
+  add(name: string, labels: Labels, value: number, timestampMs?: number): this {
     const family = this.families.get(name)
     if(!family) throw new Error(`metric ${name} is not declared`)
     const pairs = Object.entries(labels).map(([k, v]) => `${k}="${escapeLabel(v)}"`)
-    family.samples.push(`${name}${pairs.length ? `{${pairs.join(',')}}` : ''} ${formatValue(value)}`)
+    family.samples.push(`${name}${pairs.length ? `{${pairs.join(',')}}` : ''} ${formatValue(value)}${timestampMs === undefined ? '' : ` ${Math.round(timestampMs)}`}`)
     return this
   }
 

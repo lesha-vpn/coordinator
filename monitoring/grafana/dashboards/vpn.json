@@ -15,7 +15,21 @@
     "to": "now"
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Источник",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "includeAll": false,
+        "multi": false,
+        "options": []
+      }
+    ]
   },
   "annotations": {
     "list": []
@@ -27,7 +41,7 @@
       "id": 1,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -39,7 +53,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum(vpn_users_online)",
           "refId": "A",
@@ -88,7 +102,7 @@
       "id": 2,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -100,7 +114,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum(vpn_clients_online)",
           "refId": "A",
@@ -148,7 +162,7 @@
       "id": 3,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -160,7 +174,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "count(count by (tg_id) (vpn_client_last_handshake_timestamp_seconds > time() - 86400)) or vector(0)",
           "refId": "A",
@@ -208,7 +222,7 @@
       "id": 4,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -220,7 +234,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "(sum (increase(vpn_client_download_bytes_total[$__range])) + sum (increase(vpn_client_upload_bytes_total[$__range])))",
           "refId": "A",
@@ -269,7 +283,7 @@
       "id": 5,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -281,7 +295,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "vpn_users{status=\"active\"}",
           "refId": "A",
@@ -330,7 +344,7 @@
       "id": 6,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
@@ -342,7 +356,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "vpn_node_up",
           "refId": "A",
@@ -422,7 +436,7 @@
       "id": 8,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
@@ -434,7 +448,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum(rate(vpn_client_download_bytes_total[$__rate_interval])) * 8",
           "refId": "A",
@@ -443,7 +457,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum(rate(vpn_client_upload_bytes_total[$__rate_interval])) * 8",
           "refId": "B",
@@ -486,7 +500,7 @@
       "id": 9,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
@@ -498,18 +512,18 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "(sum (rate(vpn_tunnel_transmit_bytes_total[$__rate_interval])) + sum (rate(vpn_tunnel_receive_bytes_total[$__rate_interval]))) * 8",
+          "expr": "(sum (rate(vpn_client_route_download_bytes_total{route=\"remote\"}[$__rate_interval])) + sum (rate(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__rate_interval]))) * 8",
           "refId": "A",
           "legendFormat": "через REMOTE (заграница)"
         },
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "clamp_min((sum (rate(vpn_client_download_bytes_total[$__rate_interval])) + sum (rate(vpn_client_upload_bytes_total[$__rate_interval]))) - (sum (rate(vpn_tunnel_transmit_bytes_total[$__rate_interval])) + sum (rate(vpn_tunnel_receive_bytes_total[$__rate_interval]))), 0) * 8",
+          "expr": "(sum (rate(vpn_client_route_download_bytes_total{route=\"direct\"}[$__rate_interval])) + sum (rate(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__rate_interval]))) * 8",
           "refId": "B",
           "legendFormat": "напрямую с LOCAL"
         }
@@ -546,7 +560,7 @@
           "sort": "desc"
         }
       },
-      "description": "Приблизительно: туннель до REMOTE считается с накладными расходами шифрования"
+      "description": "Скачивание + отдача клиентов по точке выхода: напрямую с LOCAL (домашняя страна) или через REMOTE"
     },
     {
       "type": "timeseries",
@@ -554,7 +568,7 @@
       "id": 10,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 9,
@@ -566,7 +580,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "(sum by (user) (rate(vpn_client_download_bytes_total[$__rate_interval])) + sum by (user) (rate(vpn_client_upload_bytes_total[$__rate_interval]))) * 8",
           "refId": "A",
@@ -612,7 +626,7 @@
       "id": 11,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 10,
@@ -624,7 +638,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "(sum by (user) (increase(vpn_client_download_bytes_total[$__range])) + sum by (user) (increase(vpn_client_upload_bytes_total[$__range])))",
           "refId": "A",
@@ -635,7 +649,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum by (user) (increase(vpn_client_download_bytes_total[$__range]))",
           "refId": "B",
@@ -646,7 +660,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum by (user) (increase(vpn_client_upload_bytes_total[$__range]))",
           "refId": "C",
@@ -737,7 +751,7 @@
       "id": 12,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 10,
@@ -749,7 +763,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "(sum by (user, config) (increase(vpn_client_download_bytes_total[$__range])) + sum by (user, config) (increase(vpn_client_upload_bytes_total[$__range])))",
           "refId": "A",
@@ -760,7 +774,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "time() - max by (user, config) (vpn_client_last_handshake_timestamp_seconds)",
           "refId": "B",
@@ -836,7 +850,7 @@
     },
     {
       "type": "row",
-      "title": "Пользователи",
+      "title": "Напрямую / через REMOTE",
       "id": 13,
       "collapsed": false,
       "gridPos": {
@@ -848,16 +862,16 @@
       "panels": []
     },
     {
-      "type": "timeseries",
-      "title": "Онлайн",
+      "type": "table",
+      "title": "Кто сколько ходит напрямую с LOCAL",
       "id": 14,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
-        "h": 8,
-        "w": 16,
+        "h": 10,
+        "w": 12,
         "x": 0,
         "y": 33
       },
@@ -865,7 +879,204 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (user) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range])))",
+          "refId": "A",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (user) (increase(vpn_client_route_download_bytes_total{route=\"remote\"}[$__range])) + sum by (user) (increase(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__range])))",
+          "refId": "B",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "100 * (sum by (user) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range]))) / ((sum by (user) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range]))) + (sum by (user) (increase(vpn_client_route_download_bytes_total{route=\"remote\"}[$__range])) + sum by (user) (increase(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__range]))))",
+          "refId": "C",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "user": "Пользователь",
+              "Value #A": "Напрямую",
+              "Value #B": "Через REMOTE",
+              "Value #C": "Доля напрямую"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Напрямую"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Через REMOTE"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля напрямую"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Напрямую",
+            "desc": true
+          }
+        ],
+        "cellHeight": "sm"
+      },
+      "description": "Скачивание + отдача за выбранный период. Напрямую = в домашнюю страну через LOCAL, через REMOTE = всё остальное"
+    },
+    {
+      "type": "timeseries",
+      "title": "Скорость напрямую с LOCAL по пользователям",
+      "id": 15,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (user) (rate(vpn_client_route_download_bytes_total{route=\"direct\"}[$__rate_interval])) + sum by (user) (rate(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__rate_interval]))) * 8",
+          "refId": "A",
+          "legendFormat": "{{user}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 15,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Пользователи",
+      "id": 16,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Онлайн",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 44
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
           },
           "expr": "sum(vpn_users_online)",
           "refId": "A",
@@ -874,7 +1085,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum(vpn_clients_online)",
           "refId": "B",
@@ -914,22 +1125,22 @@
     {
       "type": "bargauge",
       "title": "Версии приложения (30 дней)",
-      "id": 15,
+      "id": 18,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 33
+        "y": 44
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum by (version) (vpn_app_devices)",
           "refId": "A",
@@ -964,35 +1175,35 @@
     {
       "type": "row",
       "title": "Серверы",
-      "id": 16,
+      "id": 19,
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 52
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "CPU",
-      "id": 17,
+      "id": 20,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 42
+        "y": 53
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "100 * (1 - sum by (node) (rate(vpn_node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval])) / sum by (node) (rate(vpn_node_cpu_seconds_total[$__rate_interval])))",
           "refId": "A",
@@ -1033,22 +1244,22 @@
     {
       "type": "timeseries",
       "title": "Память",
-      "id": 18,
+      "id": 21,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 42
+        "y": 53
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "100 * (1 - vpn_node_memory_available_bytes / vpn_node_memory_total_bytes)",
           "refId": "A",
@@ -1089,22 +1300,22 @@
     {
       "type": "timeseries",
       "title": "Сеть серверов",
-      "id": 19,
+      "id": 22,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 61
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum by (node) (rate(vpn_node_network_receive_bytes_total{device!~\"awg.*\"}[$__rate_interval])) * 8",
           "refId": "A",
@@ -1113,7 +1324,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "sum by (node) (rate(vpn_node_network_transmit_bytes_total{device!~\"awg.*\"}[$__rate_interval])) * 8",
           "refId": "B",
@@ -1154,22 +1365,22 @@
     {
       "type": "timeseries",
       "title": "Load average (1 мин) на ядро",
-      "id": 20,
+      "id": 23,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 61
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "vpn_node_load1 / vpn_node_cpus",
           "refId": "A",
@@ -1209,22 +1420,22 @@
     {
       "type": "timeseries",
       "title": "Диск /",
-      "id": 21,
+      "id": 24,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 69
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "100 * (1 - vpn_node_disk_available_bytes / vpn_node_disk_total_bytes)",
           "refId": "A",
@@ -1265,22 +1476,22 @@
     {
       "type": "timeseries",
       "title": "Handshake туннеля LOCAL–REMOTE",
-      "id": 22,
+      "id": 25,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 69
       },
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "time() - vpn_tunnel_last_handshake_timestamp_seconds",
           "refId": "A",
