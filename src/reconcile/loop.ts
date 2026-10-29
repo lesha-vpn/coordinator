@@ -17,6 +17,8 @@ import type { ReconcilerControl, ReconcileReport } from './control'
 
 export const CYCLE_INTERVAL_MS = 5 * 60_000
 export const HEALTH_INTERVAL_MS = 60_000
+/** How long a health check waits for a short operation (the 5-min cycle's hash check) to finish. */
+export const HEALTH_LOCK_WAIT_MS = 30_000
 export const GEO_INTERVAL_MS = 6 * 60 * 60_000
 export const EVENT_DEBOUNCE_MS = 1000
 export const BACKOFF_CAP_MIN = 30
@@ -37,6 +39,11 @@ export class NodeLock {
 
   get busy(): boolean {
     return this.holders > 0
+  }
+
+  /** Settles once everything queued so far has finished. */
+  idle(): Promise<void> {
+    return this.tail.then(() => {})
   }
 
   run<T>(fn: () => Promise<T>): Promise<T> {
@@ -439,6 +446,16 @@ export class Reconciler implements ReconcilerControl {
   private async checkSite(site: SiteConfig) {
     const localName = nodeName(site.name, 'local')
     const remoteName = nodeName(site.name, 'remote')
+    // The 5-min cycle fires on the same tick as every fifth health check and holds the locks for a
+    // few seconds even when there is nothing to apply; skipping then would leave a hole in /metrics.
+    if(this.lock(localName).busy || this.lock(remoteName).busy) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        Promise.all([this.lock(localName).idle(), this.lock(remoteName).idle()]),
+        new Promise(resolve => { timer = setTimeout(resolve, HEALTH_LOCK_WAIT_MS) }),
+      ])
+      clearTimeout(timer)
+    }
     // A node being provisioned may legitimately be down (reboot, interface restart): no verdict now.
     if(this.lock(localName).busy || this.lock(remoteName).busy) return
 
