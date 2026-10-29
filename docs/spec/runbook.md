@@ -16,7 +16,7 @@
 | Код | `/opt/vpn-coordinator` (git) | процесс `vpn-coordinator` под pm2 |
 | Секреты для конфига | `/opt/vpn-coordinator/.env` (600, необязательно) | значения для `${VAR}` в `config.yaml` (токен бота, пароли); читается только при старте процесса |
 | Публичный ключ бэкапов | `/etc/vpn-coordinator/backup.pub` | шифрование ежедневного бэкапа |
-| Мониторинг | `/opt/vpn-coordinator/monitoring` (`docker compose`), секреты в `monitoring/.env` | Prometheus + Grafana, раздел 2.4; данные в docker-томах, в бэкап не входят |
+| Мониторинг | отдельный сервер статистики: клон репозитория, папка `monitoring/` (`docker compose`), секреты в `monitoring/.env` | VictoriaMetrics + Grafana, раздел 2.4; данные в docker-томах, в бэкап не входят |
 | **Приватный ключ бэкапов** | **только у админа, офлайн** (менеджер паролей) | без него бэкап бесполезен |
 
 Ежедневный бэкап (файл `vpn-backup-YYYY-MM-DD.tar.age` в личке от бота) содержит БД, `config.yaml` и SSH-ключ координатора — этого достаточно, чтобы поднять всё с нуля.
@@ -99,32 +99,32 @@ Bootstrap замораживает ядро, с которым сервер пр
 
 ### 2.4 Мониторинг (Grafana)
 
-Координатор отдаёт метрики на `127.0.0.1:9469/metrics`, Prometheus в docker забирает их раз в минуту и хранит год, Grafana показывает готовый дашборд «Лёша VPN»: трафик по пользователям и устройствам, онлайн, куда уходит трафик (REMOTE или напрямую с LOCAL), CPU/RAM/диск/сеть серверов, версии приложения. На LOCAL/REMOTE ничего не ставится: цифры приходят с минутной проверкой по SSH. Наружу открыта только Grafana через Caddy, с паролем.
+Координатор раз в минуту **отправляет** метрики на отдельный сервер статистики: там VictoriaMetrics хранит их год, а Grafana показывает готовый дашборд «Лёша VPN» (трафик по пользователям и устройствам, онлайн, куда уходит трафик: REMOTE или напрямую с LOCAL, CPU/RAM/диск/сеть серверов, версии приложения). На координаторе нет ни портов, ни docker, только адрес в `config.yaml`. На LOCAL/REMOTE тоже ничего не ставится: цифры приходят с минутной проверкой по SSH. На сервере статистики всё в одном docker compose: VictoriaMetrics, Grafana и Caddy (TLS). На одном домене открыты Grafana (со своим паролем) и приём метрик (basic auth).
+
+**[стат]** — команда на сервере статистики по SSH.
 
 Первая установка:
-1. **[хостер]** DNS: A-запись для Grafana (например `stats.kiraind.ru`) → IP сервера координатора.
-2. **[коорд]** Docker: `apt install -y docker.io docker-compose-v2`.
-3. **[коорд]** В `/etc/vpn-coordinator/config.yaml` добавить:
+1. **[хостер]** Любой маленький сервер с Ubuntu 24.04 (хватит 1 vCPU / 1 ГБ), открыты 80 и 443. DNS: A-запись (например `stats.kiraind.ru`) → его IP.
+2. **[стат]** `apt install -y git docker.io docker-compose-v2 && git clone https://github.com/lesha-vpn/coordinator.git /opt/vpn-stats`
+3. **[стат]** `cd /opt/vpn-stats/monitoring && cp .env.example .env && chmod 600 .env`, в `.env` вписать `STATS_DOMAIN=stats.kiraind.ru`, длинные `GRAFANA_ADMIN_PASSWORD` и `METRICS_PASSWORD` (пароли без пробелов и `$`).
+4. **[стат]** `docker compose up -d`. Caddy сам получит сертификат. Проверка: `https://stats.kiraind.ru` открывает вход в Grafana.
+5. **[коорд]** В `/etc/vpn-coordinator/config.yaml` добавить (пароль = `METRICS_PASSWORD`, можно через `${METRICS_PASSWORD}` в `/opt/vpn-coordinator/.env`):
    ```yaml
    metrics:
-     listen: 127.0.0.1:9469
+     push:
+       url: https://stats.kiraind.ru/api/v1/import/prometheus
+       username: vpn
+       password: ...
    ```
-   затем `npm run pm2:restart` в `/opt/vpn-coordinator` (блок читается только при старте). Проверка: `curl -s 127.0.0.1:9469/metrics | head` — строки `vpn_...`.
-4. **[коорд]** `cd /opt/vpn-coordinator/monitoring && cp .env.example .env && chmod 600 .env`, в `.env` вписать `GRAFANA_URL=https://stats.kiraind.ru` и длинный `GRAFANA_ADMIN_PASSWORD`.
-5. **[коорд]** `docker compose up -d`.
-6. **[коорд]** В `/etc/caddy/Caddyfile` дописать и `systemctl reload caddy`:
-   ```
-   stats.kiraind.ru {
-     reverse_proxy 127.0.0.1:3000
-   }
-   ```
-7. Открыть `https://stats.kiraind.ru`, войти `admin` / пароль из `.env`. Дашборд открывается сразу; графики скоростей заполняются за первые ~5 минут.
+   Подхватится без рестарта (если пароль в `.env` — после `npm run pm2:restart`, `.env` читается при старте).
+6. Войти в Grafana `admin` / `GRAFANA_ADMIN_PASSWORD`. Цифры появятся через пару минут, графики скоростей заполнятся за ~5 минут.
+
+Если метрики не доходят 30 минут подряд, координатор пишет админам «метрики не отправляются …» (и «снова отправляются», когда починится). На VPN это не влияет. Подробности в `npm run pm2:logs` (`metrics push … failed`).
 
 Обслуживание:
-- Дашборд и конфиги приходят с `git pull` (`npm run update`); Grafana перечитывает дашборд сама за минуту. Правки дашборда в интерфейсе не сохраняются — нужное изменение вносится в `monitoring/grafana/dashboards/vpn.json` в репозитории.
-- Версии Prometheus/Grafana закреплены в `monitoring/docker-compose.yml`; после их изменения в репозитории: `cd monitoring && docker compose pull && docker compose up -d`.
-- Данные Prometheus живут в docker-томе и в ежедневный бэкап не входят: при переезде координатора история графиков начнётся заново, больше ничего не теряется.
-- Остановить мониторинг: `cd monitoring && docker compose down` (с `-v` — удалить и историю). Координатору это не мешает.
+- Обновить дашборд или версии контейнеров: **[стат]** `cd /opt/vpn-stats && git pull && cd monitoring && docker compose pull && docker compose up -d`. Правки дашборда в интерфейсе Grafana не сохраняются: нужное изменение вносится в `monitoring/grafana/dashboards/vpn.json` в репозитории.
+- Данные лежат в docker-томах сервера статистики и в ежедневный бэкап координатора не входят. Сервер статистики умер: поднять новый по шагам 1–4, сменить IP в DNS. Пропадёт только история графиков.
+- Выключить: убрать блок `metrics` из `config.yaml` координатора; **[стат]** `docker compose down` (с `-v` удалит и историю).
 
 ### 2.5 Ссылка на скачивание приложения
 

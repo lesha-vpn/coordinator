@@ -1,0 +1,16 @@
+apiVersion: 1
+datasources:
+  # VictoriaMetrics speaks the Prometheus query API. The uid stays "prometheus": the dashboard refers to it.
+  - name: VictoriaMetrics
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics:8428
+    isDefault: true
+    editable: false
+    basicAuth: true
+    basicAuthUser: ${METRICS_USER}
+    secureJsonData:
+      basicAuthPassword: ${METRICS_PASSWORD}
+    jsonData:
+      timeInterval: 60s

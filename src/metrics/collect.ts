@@ -5,7 +5,7 @@ import { nodeName, type NodeRole } from '../types'
 import { Exposition, type Labels } from './exposition'
 import type { HostStats } from './hostStats'
 
-// /metrics for Prometheus (R-O7). Nothing is sampled here except the coordinator's own host:
+// Prometheus-format metrics, pushed to the stats server (R-O7). Nothing is sampled here except the coordinator's own host:
 // node figures come from the minute health probe (awg dump + /proc), the rest from the DB.
 // Counters are the raw awg / kernel counters; they reset with the interface or the host,
 // which Prometheus' rate()/increase() handle.

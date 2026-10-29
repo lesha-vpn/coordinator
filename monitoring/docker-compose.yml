@@ -1,30 +1,26 @@
-# Prometheus + Grafana for the coordinator's /metrics (R-O7). Runbook: docs/spec/runbook.md, 2.4.
-# Both run with host networking and listen on 127.0.0.1 only; Grafana is published by Caddy.
-# Secrets come from monitoring/.env (see .env.example), which is not in git.
+# Stats server for the coordinator (R-O7): VictoriaMetrics receives the metrics the coordinator
+# pushes once a minute, Grafana shows them, Caddy terminates TLS for both on one domain.
+# Runs on its own server, not on the coordinator. Runbook: docs/spec/runbook.md, 2.4.
+# Settings and secrets come from monitoring/.env (see .env.example), which is not in git.
 
 services:
-  prometheus:
-    image: prom/prometheus:v3.5.0
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.154.0
     restart: unless-stopped
-    network_mode: host
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=1y
-      - --web.listen-address=127.0.0.1:9090
+      - -storageDataPath=/storage
+      - -retentionPeriod=1y
+      - -httpAuth.username=${METRICS_USER:?set METRICS_USER in monitoring/.env}
+      - -httpAuth.password=${METRICS_PASSWORD:?set METRICS_PASSWORD in monitoring/.env}
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+      - vm-data:/storage
 
   grafana:
-    image: grafana/grafana:12.1.0
+    image: grafana/grafana:12.4.13
     restart: unless-stopped
-    network_mode: host
-    depends_on: [prometheus]
+    depends_on: [victoriametrics]
     environment:
-      GF_SERVER_HTTP_ADDR: 127.0.0.1
-      GF_SERVER_HTTP_PORT: "3000"
-      GF_SERVER_ROOT_URL: ${GRAFANA_URL:?set GRAFANA_URL in monitoring/.env}
+      GF_SERVER_ROOT_URL: https://${STATS_DOMAIN:?set STATS_DOMAIN in monitoring/.env}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in monitoring/.env}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
@@ -34,11 +30,30 @@ services:
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/vpn.json
+      # Read by provisioning/datasources/victoriametrics.yml.
+      METRICS_USER: ${METRICS_USER}
+      METRICS_PASSWORD: ${METRICS_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
 
+  caddy:
+    image: caddy:2.11.4
+    restart: unless-stopped
+    depends_on: [victoriametrics, grafana]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STATS_DOMAIN: ${STATS_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
-  prometheus-data:
+  vm-data:
   grafana-data:
+  caddy-data:
+  caddy-config:

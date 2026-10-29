@@ -18,10 +18,13 @@ api:
   listen: 127.0.0.1:8080            # за reverse proxy с TLS
   publicUrl: https://vpn.example.com
 
-# Метрики для Prometheus/Grafana (monitoring/, runbook 2.4); без блока выключены.
-# Слушать только на 127.0.0.1: эндпоинт без авторизации. Изменение — после рестарта процесса.
+# Метрики раз в минуту отправляются на сервер статистики с VictoriaMetrics и Grafana
+# (monitoring/, runbook 2.4); без блока выключены. Изменения подхватываются без рестарта.
 # metrics:
-#   listen: 127.0.0.1:9469
+#   push:
+#     url: https://stats.example.com/api/v1/import/prometheus
+#     username: vpn
+#     password: ${METRICS_PASSWORD}
 
 clients:
   subnet: 10.66.0.0/16
