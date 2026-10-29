@@ -516,7 +516,7 @@
           },
           "expr": "(sum (rate(vpn_client_route_download_bytes_total{route=\"remote\"}[$__rate_interval])) + sum (rate(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__rate_interval]))) * 8",
           "refId": "A",
-          "legendFormat": "через REMOTE (заграница)"
+          "legendFormat": "REMOTE<->INTERNET"
         },
         {
           "datasource": {
@@ -525,7 +525,7 @@
           },
           "expr": "(sum (rate(vpn_client_route_download_bytes_total{route=\"direct\"}[$__rate_interval])) + sum (rate(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__rate_interval]))) * 8",
           "refId": "B",
-          "legendFormat": "напрямую с LOCAL"
+          "legendFormat": "LOCAL<->INTERNET"
         }
       ],
       "fieldConfig": {
@@ -560,7 +560,7 @@
           "sort": "desc"
         }
       },
-      "description": "Скачивание + отдача клиентов по точке выхода: напрямую с LOCAL (домашняя страна) или через REMOTE"
+      "description": "Скачивание + отдача клиентов по точке выхода в интернет: LOCAL (домашняя страна) или REMOTE (всё остальное)"
     },
     {
       "type": "timeseries",
@@ -850,7 +850,7 @@
     },
     {
       "type": "row",
-      "title": "Напрямую / через REMOTE",
+      "title": "Выход в интернет: LOCAL / REMOTE",
       "id": 13,
       "collapsed": false,
       "gridPos": {
@@ -863,15 +863,15 @@
     },
     {
       "type": "table",
-      "title": "Кто сколько ходит напрямую с LOCAL",
+      "title": "По пользователям",
       "id": 14,
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
       "gridPos": {
-        "h": 10,
-        "w": 12,
+        "h": 7,
+        "w": 24,
         "x": 0,
         "y": 33
       },
@@ -923,9 +923,9 @@
             },
             "renameByName": {
               "user": "Пользователь",
-              "Value #A": "Напрямую",
-              "Value #B": "Через REMOTE",
-              "Value #C": "Доля напрямую"
+              "Value #A": "LOCAL<->INTERNET",
+              "Value #B": "REMOTE<->INTERNET",
+              "Value #C": "Доля через LOCAL"
             }
           }
         }
@@ -940,7 +940,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Напрямую"
+              "options": "LOCAL<->INTERNET"
             },
             "properties": [
               {
@@ -952,7 +952,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Через REMOTE"
+              "options": "REMOTE<->INTERNET"
             },
             "properties": [
               {
@@ -964,7 +964,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Доля напрямую"
+              "options": "Доля через LOCAL"
             },
             "properties": [
               {
@@ -979,17 +979,17 @@
         "showHeader": true,
         "sortBy": [
           {
-            "displayName": "Напрямую",
+            "displayName": "LOCAL<->INTERNET",
             "desc": true
           }
         ],
         "cellHeight": "sm"
       },
-      "description": "Скачивание + отдача за выбранный период. Напрямую = в домашнюю страну через LOCAL, через REMOTE = всё остальное"
+      "description": "Скачивание + отдача за выбранный период. LOCAL<->INTERNET: трафик в домашнюю страну, выходит в интернет с LOCAL. REMOTE<->INTERNET: всё остальное, выходит с REMOTE"
     },
     {
-      "type": "timeseries",
-      "title": "Скорость напрямую с LOCAL по пользователям",
+      "type": "table",
+      "title": "По устройствам",
       "id": 15,
       "datasource": {
         "type": "prometheus",
@@ -997,9 +997,9 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 33
+        "w": 24,
+        "x": 0,
+        "y": 40
       },
       "targets": [
         {
@@ -1007,43 +1007,112 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "(sum by (user) (rate(vpn_client_route_download_bytes_total{route=\"direct\"}[$__rate_interval])) + sum by (user) (rate(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__rate_interval]))) * 8",
+          "expr": "(sum by (user, config) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user, config) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range])))",
           "refId": "A",
-          "legendFormat": "{{user}}"
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (user, config) (increase(vpn_client_route_download_bytes_total{route=\"remote\"}[$__range])) + sum by (user, config) (increase(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__range])))",
+          "refId": "B",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "100 * (sum by (user, config) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user, config) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range]))) / ((sum by (user, config) (increase(vpn_client_route_download_bytes_total{route=\"direct\"}[$__range])) + sum by (user, config) (increase(vpn_client_route_upload_bytes_total{route=\"direct\"}[$__range]))) + (sum by (user, config) (increase(vpn_client_route_download_bytes_total{route=\"remote\"}[$__range])) + sum by (user, config) (increase(vpn_client_route_upload_bytes_total{route=\"remote\"}[$__range]))))",
+          "refId": "C",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "user": "Пользователь",
+              "config": "Устройство",
+              "Value #A": "LOCAL<->INTERNET",
+              "Value #B": "REMOTE<->INTERNET",
+              "Value #C": "Доля через LOCAL"
+            }
+          }
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "bps",
           "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 15,
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            }
-          },
-          "min": 0
+            "align": "auto"
+          }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LOCAL<->INTERNET"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "REMOTE<->INTERNET"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля через LOCAL"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "calcs": [
-            "mean",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      }
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "LOCAL<->INTERNET",
+            "desc": true
+          }
+        ],
+        "cellHeight": "sm"
+      },
+      "description": "То же по каждому устройству за выбранный период"
     },
     {
       "type": "row",
@@ -1054,7 +1123,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 50
       },
       "panels": []
     },
@@ -1070,7 +1139,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 44
+        "y": 51
       },
       "targets": [
         {
@@ -1134,7 +1203,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 51
       },
       "targets": [
         {
@@ -1181,7 +1250,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 59
       },
       "panels": []
     },
@@ -1197,7 +1266,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 53
+        "y": 60
       },
       "targets": [
         {
@@ -1253,7 +1322,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 53
+        "y": 60
       },
       "targets": [
         {
@@ -1309,7 +1378,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 68
       },
       "targets": [
         {
@@ -1374,7 +1443,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 68
       },
       "targets": [
         {
@@ -1429,7 +1498,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 76
       },
       "targets": [
         {
@@ -1485,7 +1554,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 76
       },
       "targets": [
         {
