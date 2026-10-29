@@ -3,6 +3,7 @@ import { CLIENT_IFACE, HANDSHAKE_FRESH_SEC, TUNNEL_IFACE } from '../health/evalu
 import type { ProbeRecord } from '../reconcile/loop'
 import { nodeName, type NodeRole } from '../types'
 import { Exposition, type Labels } from './exposition'
+import type { AcctSet } from './acct'
 import type { HostStats } from './hostStats'
 
 // Prometheus-format metrics, pushed to the stats server (R-O7). Nothing is sampled here except the coordinator's own host:
@@ -32,6 +33,13 @@ interface ConfigRef {
 
 const NETWORK_STATES = ['ok', 'degraded', 'down'] as const
 
+const ACCT_METRICS: Record<AcctSet, { metric: string, route: string }> = {
+  acct_direct_up: { metric: 'vpn_client_route_upload_bytes_total', route: 'direct' },
+  acct_direct_down: { metric: 'vpn_client_route_download_bytes_total', route: 'direct' },
+  acct_remote_up: { metric: 'vpn_client_route_upload_bytes_total', route: 'remote' },
+  acct_remote_down: { metric: 'vpn_client_route_download_bytes_total', route: 'remote' },
+}
+
 function declareAll(m: Exposition) {
   m.declare('vpn_coordinator_info', 'gauge', 'Coordinator version')
   m.declare('vpn_users', 'gauge', 'Users by status (revoked = /revoke_user)')
@@ -42,6 +50,8 @@ function declareAll(m: Exposition) {
   m.declare('vpn_node_last_probe_timestamp_seconds', 'gauge', 'When the node was last probed')
   m.declare('vpn_client_upload_bytes_total', 'counter', 'Bytes received by LOCAL from the client config (client upload)')
   m.declare('vpn_client_download_bytes_total', 'counter', 'Bytes sent by LOCAL to the client config (client download)')
+  m.declare('vpn_client_route_upload_bytes_total', 'counter', 'Client upload by exit: route="direct" leaves LOCAL to the home country, "remote" goes via REMOTE (nft counters, reset on ruleset reload)')
+  m.declare('vpn_client_route_download_bytes_total', 'counter', 'Client download by exit, same routes as vpn_client_route_upload_bytes_total')
   m.declare('vpn_client_last_handshake_timestamp_seconds', 'gauge', 'Latest handshake of the client config')
   m.declare('vpn_clients_online', 'gauge', `Client configs with a handshake in the last ${HANDSHAKE_FRESH_SEC} s`)
   m.declare('vpn_users_online', 'gauge', `Users with a handshake in the last ${HANDSHAKE_FRESH_SEC} s`)
@@ -108,16 +118,17 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
   }
   for(const [status, n] of Object.entries(userCounts)) m.add('vpn_users', { status }, n)
 
-  const configs = db.prepare('SELECT id, tg_id, name, public_key, state FROM client_configs').all() as
-    { id: string, tg_id: number, name: string, public_key: string, state: string }[]
+  const configs = db.prepare('SELECT id, tg_id, name, public_key, address, state FROM client_configs').all() as
+    { id: string, tg_id: number, name: string, public_key: string, address: string, state: string }[]
   const configCounts: Record<string, number> = { active: 0, suspended: 0, revoked: 0 }
   const byKey = new Map<string, ConfigRef>()
+  const byAddress = new Map<string, ConfigRef>()
   for(const c of configs) {
     configCounts[c.state] = (configCounts[c.state] ?? 0) + 1
-    // A live config wins over a revoked one with the same key (keys are fresh per config anyway).
-    if(c.state !== 'revoked' || !byKey.has(c.public_key)) {
-      byKey.set(c.public_key, { id: c.id, name: c.name, tgId: c.tg_id, user: names.get(c.tg_id) ?? `tg:${c.tg_id}` })
-    }
+    const ref = { id: c.id, name: c.name, tgId: c.tg_id, user: names.get(c.tg_id) ?? `tg:${c.tg_id}` }
+    // A live config wins over a revoked one with the same key or address (addresses get reused).
+    if(c.state !== 'revoked' || !byKey.has(c.public_key)) byKey.set(c.public_key, ref)
+    if(c.state !== 'revoked' || !byAddress.has(c.address)) byAddress.set(c.address, ref)
   }
   for(const [state, n] of Object.entries(configCounts)) m.add('vpn_client_configs', { state }, n)
 
@@ -171,6 +182,14 @@ export function collectMetrics(ctx: AppContext, input: MetricsInput): string {
       if(probe.dump.interfaces[CLIENT_IFACE]) {
         m.add('vpn_clients_online', { site: site.name }, online.size)
         m.add('vpn_users_online', { site: site.name }, onlineUsers.size)
+      }
+
+      for(const [set, counts] of Object.entries(probe.acct ?? {}) as [AcctSet, Record<string, number>][]) {
+        const { metric, route } = ACCT_METRICS[set]
+        for(const [address, bytes] of Object.entries(counts)) {
+          const ref = byAddress.get(address)
+          if(ref) m.add(metric, { site: site.name, user: ref.user, tg_id: String(ref.tgId), config: ref.name, config_id: ref.id, route }, bytes)
+        }
       }
 
       const tunnel = probe.dump.interfaces[TUNNEL_IFACE]

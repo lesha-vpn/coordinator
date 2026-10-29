@@ -39,6 +39,14 @@ function renderSet(name: string, elements: string[]): string[] {
   return lines
 }
 
+/** Per-client byte counters for /metrics (R-O7): set name → which side of the forward path it counts. */
+export const ACCT_SETS = ['acct_direct_up', 'acct_direct_down', 'acct_remote_up', 'acct_remote_down'] as const
+
+// Dynamic set: an element per client address, created on its first packet, with a byte counter.
+function renderAcctSet(name: string): string[] {
+  return [`  set ${name} {`, '    type ipv4_addr', '    size 65535', '    flags dynamic', '    counter', '  }']
+}
+
 function chain(name: string, hook: string, rules: string[]): string[] {
   return [`  chain ${name} {`, `    ${hook}`, ...rules.map(r => `    ${r}`), '  }']
 }
@@ -73,6 +81,7 @@ export function renderLocalNft(input: LocalRenderInput): string {
     renderSet('geo_home', input.geoHome),
     renderSet('force_remote', input.forceRemote),
     renderSet('private', PRIVATE_RANGES),
+    ...ACCT_SETS.map(renderAcctSet),
     inputChain(input.addresses.outer, input.sshPort,
       `ip daddr ${bareIp(input.addresses.client)} udp dport ${input.identity.awgc.listenPort} accept`),
     // R-L3: unmarked = home (main table), 0x52 = via REMOTE (table 152).
@@ -88,6 +97,12 @@ export function renderLocalNft(input: LocalRenderInput): string {
       `meta mark ${mark} oifname != "awgt" drop`,
       'iifname "awgc" oifname "awgc" drop',
       'tcp flags syn tcp option maxseg size set rt mtu',
+      // Per-client accounting (R-O7): before NAT on the way out, after de-NAT on the way back,
+      // so the client address is on the packet both ways. Only traffic that passed the drops counts.
+      'iifname "awgc" oifname "awgt" update @acct_remote_up { ip saddr }',
+      'iifname "awgc" oifname != "awgt" update @acct_direct_up { ip saddr }',
+      'iifname "awgt" oifname "awgc" update @acct_remote_down { ip daddr }',
+      'iifname != "awgt" oifname "awgc" update @acct_direct_down { ip daddr }',
       'ct state established,related accept',
       'iifname "awgc" accept',
     ]),

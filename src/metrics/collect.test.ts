@@ -88,6 +88,27 @@ describe('collectMetrics', () => {
     expect(out).toContain('vpn_node_cpus{node="coordinator",site="",role="coordinator"} 1')
   })
 
+  it('splits client traffic by exit route from the nft counters', () => {
+    const { ctx, make } = setup()
+    const gone = make(1, 'old')
+    revokeConfig(ctx, 1, gone.id)
+    const phone = make(1, 'phone')
+    const probe = localProbe([])
+    probe.acct = {
+      acct_direct_up: { [phone.address]: 10, '10.66.99.99': 5 },
+      acct_direct_down: { [phone.address]: 300 },
+      acct_remote_up: { [phone.address]: 20 },
+      acct_remote_down: {},
+    }
+    const probes = new Map<string, ProbeRecord>([['main/local', { at: NOW, probe }]])
+    const out = lines(collectMetrics(ctx, { probes, version: 'x', now: NOW }))
+    const labels = `site="main",user="@alice",tg_id="1",config="phone",config_id="${phone.id}"`
+    expect(out).toContain(`vpn_client_route_upload_bytes_total{${labels},route="direct"} 10`)
+    expect(out).toContain(`vpn_client_route_download_bytes_total{${labels},route="direct"} 300`)
+    expect(out).toContain(`vpn_client_route_upload_bytes_total{${labels},route="remote"} 20`)
+    expect(out.filter(l => l.startsWith('vpn_client_route_'))).toHaveLength(3)
+  })
+
   it('drops stale probes and escapes label values', () => {
     const { ctx, db, make } = setup()
     db.prepare('UPDATE users SET username = ? WHERE tg_id = 1').run('a"b\\c')
