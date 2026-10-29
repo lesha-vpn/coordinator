@@ -1,0 +1,11 @@
+# One domain: the coordinator pushes to /api/v1/import/prometheus (VictoriaMetrics checks basic
+# auth itself), everything else is Grafana with its own login. VictoriaMetrics' query API stays
+# inside the compose network.
+{$STATS_DOMAIN} {
+	handle /api/v1/import/prometheus {
+		reverse_proxy victoriametrics:8428
+	}
+	handle {
+		reverse_proxy grafana:3000
+	}
+}
