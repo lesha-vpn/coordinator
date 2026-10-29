@@ -124,6 +124,7 @@ Bootstrap замораживает ядро, с которым сервер пр
 Обслуживание:
 - Обновить дашборд или версии контейнеров: **[стат]** `cd /opt/vpn-stats && git pull && cd monitoring && docker compose pull && docker compose up -d`. Правки дашборда в интерфейсе Grafana не сохраняются: нужное изменение вносится в `monitoring/grafana/dashboards/vpn.json` в репозитории.
 - Данные лежат в docker-томах сервера статистики и в ежедневный бэкап координатора не входят. Сервер статистики умер: поднять новый по шагам 1–4, сменить IP в DNS. Пропадёт только история графиков.
+- Своя VictoriaMetrics/Prometheus и Grafana вместо этого compose тоже подходят: координатору нужен только URL приёма в `metrics.push`, а `monitoring/grafana/dashboards/vpn.json` импортируется в любую Grafana (Dashboards → New → Import). Источник данных выбирается в списке «Источник» вверху дашборда; у источника с паролем на VM включить Basic authentication.
 - Выключить: убрать блок `metrics` из `config.yaml` координатора; **[стат]** `docker compose down` (с `-v` удалит и историю).
 
 ### 2.5 Ссылка на скачивание приложения
