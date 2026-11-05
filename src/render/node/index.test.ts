@@ -23,6 +23,45 @@ describe('renderLocal', () => {
   })
 })
 
+describe('renderLocal with the SOCKS5 proxy (R-L8)', () => {
+  const socks = { port: 1080, users: [{ login: 'alice', password: 'Abc123' }, { login: 'tg42', password: 'Xyz789' }], dns: ['1.1.1.1', '8.8.8.8'] }
+  const files = renderLocal({ ...localInput, socks })
+  const file = (p: string) => files.find(f => f.path === p)!
+
+  it('adds gost conf, users and unit; users readable by the group only', () => {
+    expect(files.slice(6).map(f => [f.path, f.mode])).toEqual([
+      ['/etc/vpn-node/socks/gost.yaml', 0o640],
+      ['/etc/vpn-node/socks/users', 0o640],
+      ['/etc/systemd/system/vpn-socks.service', 0o644],
+    ])
+    expect(file('/etc/vpn-node/socks/users').content).toBe('alice Abc123\ntg42 Xyz789\n')
+  })
+
+  it('gost listens on LOCAL.client with auth from the reloaded file and resolves via clients.dns', () => {
+    const conf = file('/etc/vpn-node/socks/gost.yaml').content
+    expect(conf).toContain('addr: "1.1.1.10:1080"')
+    expect(conf).toContain('type: socks5')
+    expect(conf).toContain('auther: users')
+    expect(conf).toContain('path: "/etc/vpn-node/socks/users"')
+    expect(conf).toContain('reload: 10s')
+    expect(conf).toContain('resolver: dns')
+    expect(conf).toContain('- addr: "udp://1.1.1.1:53"')
+    expect(conf).toContain('- addr: "udp://8.8.8.8:53"')
+  })
+
+  it('runs gost as vpn-socks', () => {
+    const unit = file('/etc/systemd/system/vpn-socks.service').content
+    expect(unit).toContain('User=vpn-socks')
+    expect(unit).toContain('ExecStart=/usr/local/bin/gost -C /etc/vpn-node/socks/gost.yaml')
+    expect(unit).toContain('After=network-online.target vpn-routing.service')
+  })
+
+  it('refuses logins or passwords that could break the users file', () => {
+    expect(() => renderLocal({ ...localInput, socks: { ...socks, users: [{ login: 'a b', password: 'x' }] } })).toThrow()
+    expect(() => renderLocal({ ...localInput, socks: { ...socks, users: [{ login: 'a', password: 'x\nb c' }] } })).toThrow()
+  })
+})
+
 describe('renderRemote', () => {
   it('has no routing script or unit', () => {
     const files = renderRemote(remoteInput)

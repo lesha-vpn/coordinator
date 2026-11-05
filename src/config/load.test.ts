@@ -25,6 +25,16 @@ describe('parseConfigText', () => {
     expect(config.sites[0].local.addresses.client).toBe('203.0.113.10')
   })
 
+  it('socks is off by default; on with port 1080 unless set; must not take the LOCAL ssh port', () => {
+    const off = parseConfigText(exampleText, env)
+    expect(off.ok && off.config.socks).toBeUndefined()
+    const on = parseConfigText(`${exampleText}\nsocks: {}\n`, env)
+    expect(on.ok && on.config.socks).toEqual({ port: 1080 })
+    const clash = parseConfigText(`${exampleText}\nsocks: { port: 22 }\n`, env)
+    expect(clash.ok).toBe(false)
+    if(!clash.ok) expect(clash.errors.join('\n')).toContain('collides with socks.port 22')
+  })
+
   it('expands env references inside larger strings and strips address prefixes', () => {
     const text = exampleText
       .replace('https://vpn.example.com', 'https://${HOST}/v2')

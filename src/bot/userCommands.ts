@@ -7,6 +7,7 @@ import {
   configView, createConfig, findConfigByName, listConfigs, markDelivered, renameConfig, revokeConfig, staleBotConfigs,
 } from '../services/configs'
 import { issueLoginCode, listTokens, revokeTokenForUser } from '../services/auth'
+import { ensureSocksAccount, getSocksAccount, resetSocksAccount, socksUrls, type SocksAccountRow } from '../services/socks'
 import type { MemberChecker } from '../services/membership'
 import { getUser, markMembershipChecked, reactivateUser, suspendUser, upsertUser } from '../services/users'
 import type { Messenger } from './messenger'
@@ -130,6 +131,12 @@ export async function handleUserMessage(ctx: AppContext, deps: UserCommandDeps, 
     case '/login':
       await sendLoginCode(ctx, messenger, chatId)
       return
+    case '/socks':
+      await sendSocks(ctx, messenger, chatId, false)
+      return
+    case '/socks_reset':
+      await sendSocks(ctx, messenger, chatId, true)
+      return
     case '/devices': {
       const view = devicesView(ctx, chatId)
       await messenger.sendMessage(chatId, view.text, { reply_markup: view.keyboard })
@@ -159,7 +166,11 @@ function infoText(ctx: AppContext, tgId: number): string {
     `\`/remove <name>\` ${escapeMd('— удалить устройство')}\n` +
     `\`/rename <old> <new>\` ${escapeMd('— переименовать устройство')}\n` +
     `\`/login\` ${escapeMd('— код для входа в приложение')}\n` +
-    `\`/devices\` ${escapeMd('— где выполнен вход в приложение')}\n`
+    `\`/devices\` ${escapeMd('— где выполнен вход в приложение')}\n` +
+    (ctx.config().socks
+      ? `\`/socks\` ${escapeMd('— SOCKS5-прокси (логин, пароль и ссылка)')}\n` +
+        `\`/socks_reset\` ${escapeMd('— новый пароль для прокси')}\n`
+      : '')
 }
 
 async function addDevice(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {
@@ -322,6 +333,45 @@ async function renameDevice(ctx: AppContext, messenger: Messenger, chatId: numbe
     return
   }
   await messenger.sendMessage(chatId, `Готово! Теперь устройство называется ${result.name}`)
+}
+
+const SOCKS_OFF = 'SOCKS5-прокси на сервере не включён.'
+
+/** R-L8: shows the user's proxy account (created on first use), or a fresh password with `reset`. */
+async function sendSocks(ctx: AppContext, messenger: Messenger, chatId: number, reset: boolean) {
+  if(!ctx.config().socks) {
+    await messenger.sendMessage(chatId, SOCKS_OFF)
+    return
+  }
+  const isNew = reset || !getSocksAccount(ctx.db, chatId)
+  const result = reset ? resetSocksAccount(ctx, chatId) : ensureSocksAccount(ctx, chatId)
+  if('error' in result) {
+    await messenger.sendMessage(chatId, getUser(ctx.db, chatId)?.revoked_at ? REVOKED : NOT_MEMBER)
+    return
+  }
+  const id = await messenger.sendMessage(chatId, socksText(ctx, result, isNew, reset), { parse_mode: 'MarkdownV2' })
+  // The password is in there; /socks shows it again whenever needed
+  scheduleDeletion(ctx, chatId, id, new Date(Date.now() + AUTO_DELETE_MS))
+  setTimeout(() => {
+    if(claimDeletion(ctx, chatId, id)) messenger.deleteMessage(chatId, id).catch(() => {})
+  }, AUTO_DELETE_MS)
+}
+
+function socksText(ctx: AppContext, account: SocksAccountRow, isNew: boolean, reset: boolean): string {
+  const urls = socksUrls(ctx, account)
+  const port = ctx.config().socks!.port
+  const hosts = urls.map(u => `\`${escapeCode(u.url)}\``).join('\n')
+  const servers = ctx.config().sites.map(site => site.local.addresses.client).join(', ')
+  const lead = reset ? 'Новый пароль для SOCKS5-прокси. Старый перестанет работать через несколько секунд.' : 'Твой SOCKS5-прокси:'
+  return `${escapeMd(lead)}\n\n${hosts}\n\n` +
+    `${escapeMd('Логин:')} \`${escapeCode(account.login)}\`\n` +
+    `${escapeMd('Пароль:')} \`${escapeCode(account.password)}\`\n` +
+    `${escapeMd(`Сервер: ${servers}, порт ${port}`)}\n\n` +
+    escapeMd(
+      'Трафик идёт так же, как через VPN. ' +
+      (isNew && !reset ? 'Прокси заработает через несколько секунд. ' : '') +
+      'Сообщение удалится через 5 минут, показать снова — /socks, сменить пароль — /socks_reset. Не делись паролем ни с кем.'
+    )
 }
 
 async function sendLoginCode(ctx: AppContext, messenger: Messenger, chatId: number) {

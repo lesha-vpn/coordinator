@@ -11,7 +11,7 @@ export interface AlertOptions {
 }
 
 export interface AppEvents {
-  /** Client peers changed (config added/revoked/suspended): LOCAL needs an apply (R-P1, R-P4). */
+  /** Client peers or SOCKS accounts changed (added/revoked/suspended): LOCAL needs an apply (R-P1, R-P4, R-L8). */
   'peers-changed': []
   /** Node identity changed (/rotate): every node of the site needs an apply. */
   'identity-changed': [site: string]

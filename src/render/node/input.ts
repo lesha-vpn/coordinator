@@ -10,6 +10,19 @@ export interface ClientPeer {
   address: string
 }
 
+export interface SocksUser {
+  login: string
+  password: string
+}
+
+/** SOCKS5 proxy on LOCAL (R-L8); its outgoing traffic is routed like a client's. */
+export interface SocksRenderInput {
+  port: number
+  users: SocksUser[]
+  /** Names resolve through these (clients.dns), so DNS goes the same way as the traffic. */
+  dns: string[]
+}
+
 export interface LocalRenderInput {
   node: string                 // e.g. 'main/local'
   identity: LocalIdentity
@@ -24,6 +37,7 @@ export interface LocalRenderInput {
   peers: ClientPeer[]          // active client configs only
   geoHome: string[]            // country CIDRs ∪ routing.alwaysDirect
   forceRemote: string[]        // routing.alwaysRemote
+  socks?: SocksRenderInput     // absent = proxy off
 }
 
 export interface RemoteRenderInput {
@@ -46,7 +60,15 @@ export const NODE_PATHS = {
   marker: '/etc/vpn-node/node.json',
   routingScript: '/etc/vpn-node/routing.sh',
   routingUnit: '/etc/systemd/system/vpn-routing.service',
+  socksDir: '/etc/vpn-node/socks',
+  socksConf: '/etc/vpn-node/socks/gost.yaml',
+  socksUsers: '/etc/vpn-node/socks/users',
+  socksUnit: '/etc/systemd/system/vpn-socks.service',
+  gostBin: '/usr/local/bin/gost',
 } as const
+
+/** System user the proxy runs as; nftables tells its connections apart by it (meta skuid). */
+export const SOCKS_USER = 'vpn-socks'
 
 export const MARKS = {
   tunnelSource: '0x51',   // awgt's own UDP packets → table 151 (src LOCAL.tunnel)

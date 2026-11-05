@@ -1,12 +1,12 @@
 import type { RenderedFile } from '../types'
-import { MARKS, NFT_TABLE, NODE_PATHS } from '../render/node/input'
+import { MARKS, NFT_TABLE, NODE_PATHS, SOCKS_USER } from '../render/node/input'
 import { packTar } from './tar'
 
 // Bash run on nodes over SSH (spec 7.2, 7.3). Everything a node needs to come back after a
 // reboot lives in its own files (R-P5); these scripts only install and (re)start them.
 
 /** Bump whenever any script below changes; the reconciler mixes it into desiredHash. */
-export const SCRIPTS_VERSION = '4'
+export const SCRIPTS_VERSION = '5'
 
 /** Exit codes the reconciler maps to the runbook's error strings (runbook 3.5). */
 export const EXIT_CODES = {
@@ -16,7 +16,20 @@ export const EXIT_CODES = {
   selfCheckFailed: 30,
   interfaceFailed: 31,
   routingFailed: 32,
+  socksFailed: 33,
   rebootRequired: 100,
+} as const
+
+/**
+ * gost for the SOCKS5 proxy on LOCAL (R-L8), the release the gateway image pins too. apply.sh
+ * downloads it once from GitHub and checks the sha256 (from the release's checksums.txt).
+ */
+export const GOST = {
+  version: '3.3.0',
+  sha256: {
+    amd64: '676fb7f78d267b6ae73df719c0c7f2b565dde7147da935cfafbc1e1da558b6d5',
+    arm64: 'd03699e3f385d4ff5dad68046712adfcc7515325a064d2ab046e0bece30f8f8f',
+  },
 } as const
 
 /** Line printed (with exit 100) when the node must reboot before bootstrap can continue. */
@@ -76,7 +89,7 @@ if [ -n "$kernel_metas" ]; then apt-mark hold $kernel_metas >/dev/null; fi
 
 apt_get update
 apt_get full-upgrade
-apt_get install software-properties-common nftables unattended-upgrades "linux-headers-$(uname -r)"
+apt_get install software-properties-common nftables unattended-upgrades curl "linux-headers-$(uname -r)"
 
 if ! grep -rqs 'amnezia/ppa' /etc/apt/sources.list /etc/apt/sources.list.d/; then
   add-apt-repository -y ppa:amnezia/ppa </dev/null
@@ -190,7 +203,7 @@ export function retireScript(currentAddresses: string[]): string {
 for a in ${currentAddresses.map(shellQuote).join(' ')}; do
   if grep -qF "inet $a/" <<<"$addrs"; then echo ${SAME_HOST}; exit 0; fi
 done
-for unit in awg-quick@awgc awg-quick@awgt vpn-routing; do
+for unit in awg-quick@awgc awg-quick@awgt vpn-routing vpn-socks; do
   systemctl disable --now "$unit" >/dev/null 2>&1 || true
 done
 rm -f ${NODE_PATHS.marker}
@@ -221,6 +234,12 @@ NFT_CONF=${NODE_PATHS.nftables}
 SYSCTL_CONF=${NODE_PATHS.sysctl}
 ROUTING_SCRIPT=${NODE_PATHS.routingScript}
 ROUTING_UNIT=${NODE_PATHS.routingUnit}
+SOCKS_DIR=${NODE_PATHS.socksDir}
+SOCKS_CONF=${NODE_PATHS.socksConf}
+SOCKS_UNIT=${NODE_PATHS.socksUnit}
+SOCKS_USER=${SOCKS_USER}
+GOST_BIN=${NODE_PATHS.gostBin}
+GOST_VERSION=${GOST.version}
 MARKER=${NODE_PATHS.marker}
 # Paths installed by a run that failed before its marker; the retry must still act on them.
 PENDING=${PENDING_PATH}
@@ -232,6 +251,15 @@ addrs=$(ip -4 -o addr show)
 for a in $ADDRESSES; do
   if ! grep -Fq "inet $a/" <<<"$addrs"; then fail ${EXIT_CODES.addressMissing} "address $a not present on host"; fi
 done
+
+# 1b. SOCKS5 proxy (R-L8): its user must exist before nftables rules naming it load, and the
+# proxy's files are handed to its group as they are installed.
+socks=0
+if [ "$ROLE" = local ] && [ -f "$STAGE/files$SOCKS_CONF" ]; then socks=1; fi
+if [ "$socks" = 1 ] && ! id -u "$SOCKS_USER" >/dev/null 2>&1; then
+  useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$SOCKS_USER" \
+    || fail ${EXIT_CODES.socksFailed} "cannot create user $SOCKS_USER"
+fi
 
 # 2. Install files whose content or mode differs; keep the old copy for the peer-only check.
 # A failed apply leaves files installed but not activated: seed from its pending list, else the
@@ -253,6 +281,8 @@ while read -r mode path; do
     cp -p "$dst" "$STAGE/old$path"
   fi
   install -D -m "$mode" "$src" "$dst.vpn-new"
+  # Group set before the swap: gost re-reads its users file on a timer and must never see it unreadable.
+  if [[ "$path" == "$SOCKS_DIR/"* ]]; then chgrp "$SOCKS_USER" "$dst.vpn-new"; fi
   mv -f "$dst.vpn-new" "$dst"
   is_changed "$path" || changed="$changed$path "
 done < "$STAGE/manifest"
@@ -305,6 +335,48 @@ elif [ -e "$ROOT$ROUTING_UNIT" ] || [ -e "$ROOT$ROUTING_SCRIPT" ] || [ -e "$ROOT
   systemctl -q disable --now vpn-routing awg-quick@awgc >/dev/null 2>&1 || true
   rm -f -- "$ROOT$AWG_DIR/awgc.conf" "$ROOT$ROUTING_SCRIPT"
   if [ -e "$ROOT$ROUTING_UNIT" ]; then rm -f -- "$ROOT$ROUTING_UNIT"; systemctl daemon-reload; fi
+fi
+
+# SOCKS5 proxy last: it binds LOCAL.client and its traffic needs the routing above. A changed
+# users file needs nothing: gost re-reads it, sessions stay (like syncconf for peers). Everything
+# else is live by now, so a failure here leaves only the proxy pending for the retry.
+socks_fail() {
+  printf '%s\n' "$SOCKS_CONF" "$SOCKS_UNIT" > "$ROOT$PENDING.tmp"
+  mv -f "$ROOT$PENDING.tmp" "$ROOT$PENDING"
+  fail ${EXIT_CODES.socksFailed} "$1"
+}
+if [ "$socks" = 1 ]; then
+  # gost comes from GitHub once, checked against the pinned sha256.
+  gost_updated=0
+  if ! "$ROOT$GOST_BIN" -V 2>/dev/null | grep -Fq "gost v$GOST_VERSION "; then
+    case "$(uname -m)" in
+      x86_64) garch=amd64 gsum=${GOST.sha256.amd64} ;;
+      aarch64) garch=arm64 gsum=${GOST.sha256.arm64} ;;
+      *) socks_fail "gost: unsupported arch $(uname -m)" ;;
+    esac
+    gtgz="$STAGE/gost.tar.gz"
+    curl -fsSL --retry 3 --max-time 300 -o "$gtgz" \
+      "https://github.com/go-gost/gost/releases/download/v$GOST_VERSION/gost_\${GOST_VERSION}_linux_$garch.tar.gz" \
+      || socks_fail 'gost download failed'
+    echo "$gsum  $gtgz" | sha256sum -c --status || socks_fail 'gost download: sha256 mismatch'
+    tar -xzf "$gtgz" -C "$STAGE" gost || socks_fail 'gost download: bad archive'
+    install -D -m 755 "$STAGE/gost" "$ROOT$GOST_BIN.vpn-new"
+    mv -f "$ROOT$GOST_BIN.vpn-new" "$ROOT$GOST_BIN"
+    gost_updated=1
+  fi
+  if is_changed "$SOCKS_UNIT"; then systemctl daemon-reload; fi
+  if is_changed "$SOCKS_UNIT" || is_changed "$SOCKS_CONF" || [ "$gost_updated" = 1 ]; then
+    systemctl -q enable vpn-socks
+    systemctl restart vpn-socks || socks_fail 'vpn-socks failed to start'
+  else
+    systemctl -q enable --now vpn-socks || socks_fail 'vpn-socks failed to start'
+  fi
+  systemctl -q is-active vpn-socks || socks_fail 'vpn-socks not running'
+elif [ -e "$ROOT$SOCKS_UNIT" ] || [ -e "$ROOT$SOCKS_DIR" ]; then
+  # Proxy turned off (or a LOCAL host reused as REMOTE): stop it and drop its files and accounts.
+  systemctl -q disable --now vpn-socks >/dev/null 2>&1 || true
+  rm -rf -- "$ROOT$SOCKS_DIR"
+  if [ -e "$ROOT$SOCKS_UNIT" ]; then rm -f -- "$ROOT$SOCKS_UNIT"; systemctl daemon-reload; fi
 fi
 
 # 5. Self-check.

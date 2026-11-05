@@ -163,9 +163,9 @@ async function revokeUserCommand(ctx: AppContext, messenger: Messenger, chatId: 
     await messenger.sendMessage(chatId, `Пользователь ${arg} не найден`)
     return
   }
-  const { configs, tokens } = revokeUser(ctx, user.tg_id)
+  const { configs, tokens, socks } = revokeUser(ctx, user.tg_id)
   const who = user.username ? `@${user.username} (${user.tg_id})` : String(user.tg_id)
-  await messenger.sendMessage(chatId, `${who} отозван: конфигов ${configs}, токенов устройств ${tokens}`)
+  await messenger.sendMessage(chatId, `${who} отозван: конфигов ${configs}, токенов устройств ${tokens}${socks ? ', SOCKS5-учётка удалена' : ''}`)
 }
 
 async function unrevokeUserCommand(ctx: AppContext, messenger: Messenger, chatId: number, arg: string | undefined) {

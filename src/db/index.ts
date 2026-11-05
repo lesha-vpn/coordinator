@@ -132,6 +132,17 @@ const migrations: string[] = [
   -- Network state last announced to the users' chat (R-H4); NULL = same as network.
   ALTER TABLE sites ADD COLUMN announced TEXT;
   `,
+  `
+  -- SOCKS5 proxy account per user (R-L8). The password is kept in clear: the proxy on LOCAL
+  -- needs it, and the bot shows it again on /socks.
+  CREATE TABLE socks_accounts (
+    tg_id INTEGER PRIMARY KEY REFERENCES users(tg_id),
+    login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
 ]
 
 export function openDb(file: string): Db {

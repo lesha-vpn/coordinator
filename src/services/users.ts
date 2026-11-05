@@ -2,6 +2,7 @@ import type { Db } from '../db'
 import { now } from '../db'
 import type { AppContext } from '../context'
 import type { UserRow } from '../types'
+import { deleteSocksAccount, hasSocksAccount } from './socks'
 
 // Users are keyed by Telegram id (R-S1); username is display-only and refreshed on every contact.
 
@@ -69,7 +70,8 @@ export function suspendUser(ctx: AppContext, tgId: number): DisableResult {
     return { configs, tokens: revokeTokens(ctx.db, tgId, at) }
   })()
 
-  if(result.configs > 0) {
+  // A SOCKS account drops out of the proxy with the user (R-L8)
+  if(result.configs > 0 || hasSocksAccount(ctx.db, tgId)) {
     ctx.events.emit('peers-changed')
   }
 
@@ -78,36 +80,38 @@ export function suspendUser(ctx: AppContext, tgId: number): DisableResult {
 
 /** Back in the chat: configs return, device tokens do not (a new /login is required, R-B1, R-A3). */
 export function reactivateUser(ctx: AppContext, tgId: number): number {
-  const configs = ctx.db.transaction(() => {
+  const { configs, socks } = ctx.db.transaction(() => {
     // An admin revocation is not undone by rejoining the chat
     if(ctx.db.prepare(`UPDATE users SET status = 'active' WHERE tg_id = ? AND revoked_at IS NULL`).run(tgId).changes === 0) {
-      return 0
+      return { configs: 0, socks: false }
     }
 
-    return ctx.db.prepare(`UPDATE client_configs SET state = 'active' WHERE tg_id = ? AND state = 'suspended'`)
+    const configs = ctx.db.prepare(`UPDATE client_configs SET state = 'active' WHERE tg_id = ? AND state = 'suspended'`)
       .run(tgId).changes
+    return { configs, socks: hasSocksAccount(ctx.db, tgId) }
   })()
 
-  if(configs > 0) {
+  if(configs > 0 || socks) {
     ctx.events.emit('peers-changed')
   }
 
   return configs
 }
 
-/** Admin /revoke_user: like suspend, but configs are revoked for good (their addresses become free). */
-export function revokeUser(ctx: AppContext, tgId: number): DisableResult {
+/** Admin /revoke_user: like suspend, but configs and the SOCKS account are revoked for good (their addresses become free). */
+export function revokeUser(ctx: AppContext, tgId: number): DisableResult & { socks: boolean } {
   const result = ctx.db.transaction(() => {
     const at = now()
     ctx.db.prepare(`UPDATE users SET status = 'suspended', revoked_at = COALESCE(revoked_at, ?) WHERE tg_id = ?`).run(at, tgId)
     const configs = ctx.db.prepare(`
       UPDATE client_configs SET state = 'revoked', revoked_at = ? WHERE tg_id = ? AND state != 'revoked'
     `).run(at, tgId).changes
+    const socks = deleteSocksAccount(ctx.db, tgId)
 
-    return { configs, tokens: revokeTokens(ctx.db, tgId, at) }
+    return { configs, tokens: revokeTokens(ctx.db, tgId, at), socks }
   })()
 
-  if(result.configs > 0) {
+  if(result.configs > 0 || result.socks) {
     ctx.events.emit('peers-changed')
   }
 

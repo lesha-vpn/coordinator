@@ -4,6 +4,7 @@ import type { NodeTarget } from '../provision/node'
 import { SCRIPTS_VERSION } from '../provision/scripts'
 import { getLocalIdentity, getRemoteIdentity } from '../services/identity'
 import { activePeers } from '../services/configs'
+import { activeSocksUsers } from '../services/socks'
 import { getGeoSet } from '../geo/store'
 import { cidrToRange, ipToInt, mergeCidrs } from '../geo/cidr'
 import { desiredHash, renderLocal, renderRemote } from '../render/node'
@@ -37,6 +38,7 @@ export function buildRenderInputs(ctx: AppContext, site: SiteConfig): { local: L
     peers: activePeers(ctx.db),
     geoHome: mergeCidrs([...(geo?.cidrs ?? []), ...config.routing.alwaysDirect]),
     forceRemote: [...config.routing.alwaysRemote],
+    ...(config.socks ? { socks: { port: config.socks.port, users: activeSocksUsers(ctx.db), dns: [...config.clients.dns] } } : {}),
   }
 
   const remote: RemoteRenderInput = {
