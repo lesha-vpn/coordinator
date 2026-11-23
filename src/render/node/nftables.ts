@@ -116,8 +116,15 @@ export function renderLocalNft(input: LocalRenderInput): string {
 
 export function renderRemoteNft(input: RemoteRenderInput): string {
   return ruleset([
+    renderSet('geo_home', input.geoHome),
+    renderSet('private', PRIVATE_RANGES),
     inputChain(input.addresses.outer, input.sshPort,
       `ip saddr ${bareIp(input.localTunnelAddress)} ip daddr ${bareIp(input.addresses.tunnel)} udp dport ${input.identity.awgt.listenPort} accept`),
+    // Protective layer: traffic to home countries goes direct, private stays local, everything else via tunnel.
+    chain('prerouting', 'type filter hook prerouting priority mangle; policy accept;', [
+      'iifname != "awgt" ip daddr @geo_home drop',
+      'iifname != "awgt" ip daddr @private return',
+    ]),
     chain('forward', 'type filter hook forward priority filter; policy drop;', [
       'meta nfproto ipv6 drop',
       'tcp flags syn tcp option maxseg size set rt mtu',

@@ -22,7 +22,18 @@ export function buildRenderInputs(ctx: AppContext, site: SiteConfig): { local: L
   const config = ctx.config()
   const localIdentity = getLocalIdentity(ctx.db, site.name)
   const remoteIdentity = getRemoteIdentity(ctx.db, site.name)
-  const geo = getGeoSet(ctx.db, site.local.country)
+
+  // LOCAL always uses its own country for geo_home (home-country traffic stays local).
+  const geoLocal = getGeoSet(ctx.db, site.local.country)
+
+  // REMOTE protective layer: uses remoteCountry if specified, falls back to local.country.
+  const remoteCountryCode = site.remote.remoteCountry ?? site.local.country
+  const geoRemote = getGeoSet(ctx.db, remoteCountryCode)
+
+  const alwaysDirectCidrs = config.routing.alwaysDirect
+  // Compute geoHome once per node (avoid double-parse if countries match).
+  const localGeoHome = mergeCidrs([...(geoLocal?.cidrs ?? []), ...alwaysDirectCidrs])
+  const remoteGeoHome = mergeCidrs([...(geoRemote?.cidrs ?? []), ...alwaysDirectCidrs])
 
   const local: LocalRenderInput = {
     node: nodeName(site.name, 'local'),
@@ -35,7 +46,7 @@ export function buildRenderInputs(ctx: AppContext, site: SiteConfig): { local: L
     tunnelSubnet: config.tunnel.subnet,
     tunnelMtu: config.tunnel.mtu,
     peers: activePeers(ctx.db),
-    geoHome: mergeCidrs([...(geo?.cidrs ?? []), ...config.routing.alwaysDirect]),
+    geoHome: localGeoHome,
     forceRemote: [...config.routing.alwaysRemote],
   }
 
@@ -48,6 +59,7 @@ export function buildRenderInputs(ctx: AppContext, site: SiteConfig): { local: L
     localTunnelAddress: site.local.addresses.tunnel,
     tunnelSubnet: config.tunnel.subnet,
     tunnelMtu: config.tunnel.mtu,
+    geoHome: remoteGeoHome,
   }
 
   return { local, remote }

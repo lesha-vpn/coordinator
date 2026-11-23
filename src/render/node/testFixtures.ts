@@ -35,4 +35,5 @@ export const remoteInput: RemoteRenderInput = {
   localTunnelAddress: '1.1.1.12',
   tunnelSubnet: '10.255.0.0/30',
   tunnelMtu: 1380,
+  geoHome: ['5.0.0.0/8'],
 }
