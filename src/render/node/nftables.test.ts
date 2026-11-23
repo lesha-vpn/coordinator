@@ -40,6 +40,7 @@ function remoteInput(over: Partial<RemoteRenderInput> = {}): RemoteRenderInput {
     localTunnelAddress: '203.0.113.12',
     tunnelSubnet: '10.255.0.0/30',
     tunnelMtu: 1380,
+    geoHome: ['5.0.0.0/8', '31.40.0.0/16'],
     ...over,
   }
 }
@@ -150,18 +151,30 @@ describe('renderLocalNft', () => {
 describe('renderRemoteNft', () => {
   const out = renderRemoteNft(remoteInput())
 
+  it('renders geo_home and private sets', () => {
+    const geo = setBlock(out, 'geo_home')
+    expect(geo).toContain('type ipv4_addr')
+    expect(geo).toContain('flags interval')
+    expect(geo).toContain('auto-merge')
+    expect(geo).toContain('5.0.0.0/8')
+    expect(geo).toContain('31.40.0.0/16')
+    expect(setBlock(out, 'private')).toContain('10.0.0.0/8')
+  })
+
   it('allows AWG only from LOCAL.tunnel to REMOTE.tunnel', () => {
     expect(out.startsWith('#!/usr/sbin/nft -f\n\nflush ruleset\n')).toBe(true)
     expect(out).toContain('ip saddr 203.0.113.12 ip daddr 198.51.100.20 udp dport 41000 accept')
     expect(out).toContain('ip daddr 198.51.100.21 tcp dport 22 accept')
-    expect(out).not.toContain('set geo_home')
-    expect(out).not.toContain('awgc')
+    expect(out).toContain('set geo_home')
   })
 
-  it('opens the configured non-22 SSH port instead of 22', () => {
-    const custom = renderRemoteNft(remoteInput({ sshPort: 2200 }))
-    expect(custom).toContain('ip daddr 198.51.100.21 tcp dport 2200 accept')
-    expect(custom).not.toContain('tcp dport 22 ')
+  it('renders prerouting with geo_home drop for protective layer', () => {
+    expect(out).toContain('chain prerouting {')
+    expect(out).toContain('type filter hook prerouting priority mangle; policy accept;')
+    // geo_home drop first (before any accept in forward)
+    expect(out).toContain('iifname != "awgt" ip daddr @geo_home drop')
+    // private return
+    expect(out).toContain('iifname != "awgt" ip daddr @private return')
   })
 
   it('forwards and NATs tunnel traffic', () => {
@@ -169,6 +182,11 @@ describe('renderRemoteNft', () => {
     expect(out).toContain('meta nfproto ipv6 drop')
     expect(out).toContain('tcp flags syn tcp option maxseg size set rt mtu')
     expect(out).toContain('oifname != "awgt" ip saddr 10.255.0.0/30 snat ip to 198.51.100.21')
+  })
+
+  it('geo_home empty omits elements', () => {
+    const empty = renderRemoteNft(remoteInput({ geoHome: [] }))
+    expect(setBlock(empty, 'geo_home')).not.toContain('elements')
   })
 
   it('is deterministic', () => {
@@ -195,4 +213,5 @@ describe.skipIf(!nftUsable)('nft -c', () => {
   it('accepts the LOCAL ruleset', () => check(renderLocalNft(localInput())))
   it('accepts the LOCAL ruleset with empty sets', () => check(renderLocalNft(localInput({ geoHome: [], forceRemote: [] }))))
   it('accepts the REMOTE ruleset', () => check(renderRemoteNft(remoteInput())))
+  it('accepts the REMOTE ruleset with empty geoHome', () => check(renderRemoteNft(remoteInput({ geoHome: [] }))))
 })

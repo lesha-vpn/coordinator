@@ -35,6 +35,8 @@ export interface RemoteRenderInput {
   localTunnelAddress: string   // LOCAL.tunnel, the only allowed source for the awgt port
   tunnelSubnet: string
   tunnelMtu: number
+  /** CIDRs for the REMOTE node's own geo_home set (protective layer). */
+  geoHome: string[]
 }
 
 // Fixed on-node layout shared by renderers, scripts and the health check.

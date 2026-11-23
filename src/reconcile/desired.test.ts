@@ -78,9 +78,13 @@ describe('buildTargets', () => {
     expect(buildRenderInputs(ctx, site).local.geoHome).toEqual(['10.0.1.0/24', '192.0.2.0/24'])
 
     updateGeoSet(ctx.db, 'RU', ['10.0.0.0/24'], 'test')
+    // remoteCountry: GB in exampleConfig — REMOTE looks up GB's geo set
+    updateGeoSet(ctx.db, 'GB', ['10.0.0.0/24'], 'test')
     const inputs = buildRenderInputs(ctx, site)
     expect(inputs.local.geoHome).toEqual(['10.0.0.0/23', '192.0.2.0/24'])
     expect(inputs.local.forceRemote).toEqual(['198.18.0.0/15'])
+    // REMOTE geoHome uses remoteCountry's geo set + alwaysDirect
+    expect(inputs.remote.geoHome).toEqual(['10.0.0.0/23', '192.0.2.0/24'])
   })
 
   it('peer and identity changes move only the affected hashes', () => {

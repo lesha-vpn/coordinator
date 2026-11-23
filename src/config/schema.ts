@@ -46,6 +46,8 @@ const remoteNode = z.object({
   // Where foreign traffic exits; names the server in the app (Config.serverName). Optional so
   // configs from before it existed still load; without it the site name is shown.
   country: countryCode.optional(),
+  // Country code used for geo_home-based filtering on the REMOTE node (protective layer).
+  remoteCountry: countryCode.optional(),
   ssh,
   addresses: z.object({
     outer: hostAddress,
